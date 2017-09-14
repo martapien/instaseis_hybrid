@@ -21,7 +21,11 @@ import collections
 
 import numpy as np
 from obspy.signal.util import next_pow_2
+from obspy.signal.interpolation import lanczos_interpolation
+from obspy.signal.filter import lowpass
+from obspy.signal.filter import highpass
 import os
+import h5py
 
 from .base_instaseis_db import BaseInstaseisDB
 from .. import finite_elem_mapping
@@ -445,3 +449,169 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             axisem_version=self.parsed_mesh.axisem_version,
             datetime=self.parsed_mesh.creation_time
         )
+
+    def get_data_hybrid(self, source, receiver, dt, dumpfields,
+                        filter_freqs=None):
+        """
+        Extract data for hybrid modelling from a netCDF based Instaseis
+        database. Outputs dumpfields in tpr.
+
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :param receiver: The receiver.
+        :type dt: dt: float
+        :param dt: Desired sampling rate of the dumped fields. Resampling is 
+            done using a Lanczos kernel.
+        :type dumpfields: tuple of str
+        :param dumpfields: Which fields to dump. Must be a tuple
+            containing any combination of ``"displacement"``, ``"velocity"``, 
+            ``"strain"``, and ``"traction"``.
+        """
+
+        if "strain" in dumpfields or "traction" in dumpfields:
+            components = ("hybrid", "strain")
+        else:
+            components = ("hybrid")
+
+        # the database is never reciprocal
+        if self.info.is_reciprocal:
+            raise NotImplementedError("Need a forward Instaseis database.")
+        else:
+            a, b = receiver, source
+
+        rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+            a.x(planet_radius=self.info.planet_radius),
+            a.y(planet_radius=self.info.planet_radius),
+            a.z(planet_radius=self.info.planet_radius),
+            b.longitude, b.colatitude)
+
+        coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+
+        element_info = self._get_element_info(coordinates=coordinates)
+
+        data = self._get_data(
+            source=source, receiver=receiver, components=components,
+            coordinates=coordinates, element_info=element_info)
+
+        duration = (self.info.npts - 1) * self.info.dt
+        new_npts = int(round(duration / dt, 6)) + 1
+
+        # review pretty ugly here?
+        if "displacement" in dumpfields or "velocity" in dumpfields:
+            displ = data["displacement"]
+            displ_new = [[], [], []]
+            for i in np.arange(displ.shape[1]):
+                if filter_freqs is not None:
+                    displ[:, i] = lowpass(
+                        displ[:, i], filter_freqs[0], 1. / self.info.dt,
+                        corners=4, zerophase=True)
+                    displ[:, i] = highpass(
+                        displ[:, i], filter_freqs[1], 1. / self.info.dt,
+                        corners=4, zerophase=True)
+                if dt != self.info.dt:
+                    displ_tmp = np.concatenate(
+                        [np.zeros(20), displ[:, i], np.zeros(20)])
+                    displ_tmp = lanczos_interpolation(
+                        data=displ_tmp, old_start=-20 * self.info.dt,
+                        old_dt=self.info.dt, new_start=0, new_dt=dt,
+                        new_npts=new_npts, a=12, window="blackman")
+                    displ_tmp[0] = 0.0
+                    displ_new[i] = displ_tmp
+            if dt != self.info.dt:
+                displ = np.array(displ_new).T
+
+        if "strain" in dumpfields or "traction" in dumpfields:
+            strain = data["strain"]
+            strain_new = [[], [], [], [], [], []]
+            for i in np.arange(strain.shape[1]):
+                if filter_freqs is not None:
+                    strain[:, i] = lowpass(
+                        strain[:, i], filter_freqs[0], 1. / self.info.dt,
+                        corners=4, zerophase=True)
+                    strain[:, i] = highpass(
+                        strain[:, i], filter_freqs[1], 1. / self.info.dt,
+                        corners=4, zerophase=True)
+                if dt != self.info.dt:
+                    strain_tmp = np.concatenate(
+                        [np.zeros(20), strain[:, i], np.zeros(20)])
+                    strain_tmp = lanczos_interpolation(
+                        data=strain_tmp, old_start=-20 * self.info.dt,
+                        old_dt=self.info.dt, new_start=0, new_dt=dt,
+                        new_npts=new_npts, a=12, window="blackman")
+                    strain_tmp[0] = 0.0
+                    strain_new[i] = strain_tmp
+            if dt != self.info.dt:
+                strain = np.array(strain_new).T
+        # review: we can either correct for the different axisem stfs here,
+        # at extraction, and just differentiate/integrate according to the
+        # general instaseis consensus, so that
+        # displacement/velocity/acceleration always extract the same arrays
+        # regardless of the stf of the forward database, i.e.
+        # if self.info.stf ==  "errorf": (blabla)
+        # OR: we can correct that at the stage of seismogram re-propagation (
+        # currently chosen option)
+        if "displacement" in dumpfields:
+            data["displacement"] = displ
+        if "velocity" in dumpfields:
+            velocity = [[], [], []]
+            velocity[0] = np.gradient(displ[:, 0], dt)
+            velocity[1] = np.gradient(displ[:, 1], dt)
+            velocity[2] = np.gradient(displ[:, 2], dt)
+            data["velocity"] = np.array(velocity).T
+        if "strain" in dumpfields or "traction" in dumpfields:
+            data["strain"] = strain
+
+        return data
+
+    def get_elastic_params(self, source, receivers, outfile):
+
+        npoints = len(receivers.network[0])
+        mu = np.zeros(npoints)
+        rho = np.zeros(npoints)
+        lbda = np.zeros(npoints)
+
+        i = 0
+        for receiver in receivers.network[0]:
+            if self.info.is_reciprocal:
+                a, b = source, receiver
+            else:
+                a, b = receiver, source
+
+            rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+                a.x(planet_radius=self.info.planet_radius),
+                a.y(planet_radius=self.info.planet_radius),
+                a.z(planet_radius=self.info.planet_radius),
+                b.longitude, b.colatitude)
+
+            coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+
+            ei = self._get_element_info(coordinates=coordinates)
+            mesh = self.parsed_mesh.f["Mesh"]
+
+            if not self.read_on_demand:
+                mesh_mu = self.parsed_mesh.mesh_mu
+                mesh_rho = self.parsed_mesh.mesh_rho
+                mesh_lambda = self.parsed_mesh.mesh_lambda
+            else:
+                mesh_mu = mesh["mesh_mu"]
+                mesh_rho = mesh["mesh_rho"]
+                mesh_lambda = mesh["mesh_lambda"]
+
+            if self.info.dump_type == "displ_only":
+                npol = self.info.spatial_order
+                mu[i] = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+                rho[i] = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+                lbda[i] = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+            else:
+                mu[i] = mesh_mu[ei.id_elem]
+                rho[i] = mesh_rho[ei.id_elem]
+                lbda[i] = mesh_lambda[ei.id_elem]
+            i += 1
+        f = h5py.File(outfile, "a")
+        grp = f.create_group('elastic_params')
+        dset = grp.create_dataset('mu', data=mu)
+        dset = grp.create_dataset('rho', data=rho)
+        dset = grp.create_dataset('lambda', data=lbda)
+        f.close()

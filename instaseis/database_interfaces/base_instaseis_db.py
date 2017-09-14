@@ -513,6 +513,354 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             st += tr
         return st
 
+    def get_seismograms_hybrid_source(self, sources, receiver,
+                                      components=("Z", "N", "E"),
+                                      kind='displacement', dt=None,
+                                      kernelwidth=12):
+
+        """
+        Extract seismograms for a hybrid source from a local simulation.
+        :param sources: A collection of point sources.
+        :type sources: :class:`~instaseis.source.FiniteSource` or list of
+            :class:`~instaseis.source.Source` objects.
+        :param receiver: The seismic receiver.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :type components: tuple of str, optional
+        :param components: Which components to calculate. Must be a tuple
+            containing any combination of ``"Z"``, ``"N"``, ``"E"``,
+            ``"R"``, and ``"T"``. Defaults to ``["Z", "N", "E"]`` for two
+            component databases, to ``["N", "E"]`` for horizontal only
+            databases, and to ``["Z"]`` for vertical only databases.
+        :type kind: str, optional
+        :param kind: The desired units of the seismogram:
+            ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the seismograms. Resampling is done
+            using a Lanczos kernel.
+        :type kernelwidth: int, optional
+        :param kernelwidth: The width of the sinc kernel used for resampling in
+            terms of the original sampling interval. Best choose something
+            between 10 and 20.
+        :type correct_mu: bool, optional
+        :param correct_mu: Correct the source magnitude for the actual shear
+            modulus from the model.
+        :type progress_callback: function, optional
+        :param progress_callback: Optional callback function that will be
+            called with current source number and the number of total
+            sources for each calculated source. Useful for integration into
+            user interfaces to provide some kind of progress information. If
+            the callback returns ``True``, the calculation will be cancelled.
+
+        :returns: Multi component hybrid source seismogram.
+        :rtype: :class:`obspy.core.stream.Stream`
+        """
+        if components is None:
+            components = self.default_components
+
+        if not self.info.is_reciprocal:
+            raise NotImplementedError
+
+        data_summed_moment = {}
+        data_summed_force = {}
+        data_summed = {}
+
+        for _i, source in enumerate(sources.pointsources):
+            # Don't perform the diff/integration here, but after the
+            # resampling later on.
+            if isinstance(source, Source):
+                kind_tmp = INV_KIND_MAP[STF_MAP[self.info.stf]]
+            elif isinstance(source, ForceSource):
+                kind_tmp = INV_KIND_MAP[STF_MAP[self.info.stf] - 1]
+            else:
+                raise NotImplementedError
+
+            data = self.get_seismograms(
+                source, receiver, components,
+                # Effectively results in nothing happening.
+                kind=kind_tmp, return_obspy_stream=False,
+                remove_source_shift=False)
+
+            duration = (self.info.npts - 1) * self.info.dt
+            new_npts = int(round(duration / source.dt, 6)) + 1
+            new_nfft = int(next_pow_2(new_npts) * 2)
+
+            # review can the stfs be interpolated out of the comp-loop?
+            for comp in components:
+                # We assume here that the sliprate is well-behaved,
+                # e.g. zeros at the boundaries and no energy above the mesh
+                # resolution.
+                if source.dt is None or source.sliprate is None:
+                    raise ValueError("source has no source time function")
+
+                if STF_MAP[self.info.stf] not in [0, 1]:
+                    raise NotImplementedError(
+                        'deconvolution not implemented for stf %s'
+                        % (self.info.stf))
+
+                stf_deconv_map = {
+                    0: self.info.sliprate,
+                    1: self.info.slip}
+
+                new_dt = source.dt
+
+                stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
+
+                stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                             old_start=0, old_dt=self.info.dt,
+                                             new_start=0, new_dt=new_dt,
+                                             new_npts=new_npts, a=12,
+                                             window="blackman")
+
+                stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
+
+                if new_dt > self.info.dt:  # we can only upsample the db
+                    raise ValueError("dt of the source not compatible")
+
+                stf_conv_f = np.fft.rfft(source.sliprate,
+                                         n=new_nfft)
+
+                data_new = lanczos_interpolation(data=data[comp],
+                                             old_start=0, old_dt=self.info.dt,
+                                             new_start=0, new_dt=new_dt,
+                                             new_npts=new_npts, a=12,
+                                             window="blackman")
+
+                # Apply a 5 percent, at least 5 samples taper at the end.
+                # The first sample is guaranteed to be zero in any case.
+                tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
+                taper = np.ones_like(data_new)
+                taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
+                dataf = np.fft.rfft(taper * data_new, n=new_nfft)
+
+                # Ensure numerical stability by not dividing with zero.
+                f = stf_conv_f
+                _l = np.abs(stf_deconv_f)
+                _idx = np.where(_l > 0.0)
+                f[_idx] /= stf_deconv_f[_idx]
+                f[_l == 0] = 0 + 0j
+
+                data[comp] = np.fft.irfft(dataf * f)[:new_npts]
+
+            if isinstance(source, Source):
+                for comp in components:
+                    if comp in data_summed_moment:
+                        data_summed_moment[comp] += data[comp]
+                    else:
+                        data_summed_moment[comp] = data[comp]
+            if isinstance(source, ForceSource):
+                for comp in components:
+                    if comp in data_summed_force:
+                        data_summed_force[comp] += data[comp]
+                    else:
+                        data_summed_force[comp] = data[comp]
+
+        if dt is not None:
+            for comp in components:
+                # We don't need to align a sample to the peak of the source
+                # time function here.
+                new_npts = int(round((len(data_summed_force[comp]) - 1) *
+                                     self.info.dt / dt, 6) + 1)
+                data_summed_moment[comp] = lanczos_interpolation(
+                    data=np.require(data_summed_moment[comp],
+                                    requirements=["C"]),
+                    old_start=0, old_dt=self.info.dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                data_summed_force[comp] = lanczos_interpolation(
+                    data=np.require(data_summed_force[comp],
+                                    requirements=["C"]),
+                    old_start=0, old_dt=self.info.dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                # The resampling assumes zeros outside the data range. This
+                # does not introduce any errors at the beginning as the data is
+                # actually zero there but it does affect the end. We will
+                # remove all samples that are affected by the boundary
+                # conditions here.
+                #
+                # Also don't cut it for the "identify" interpolation which is
+                # important for testing.
+                if round(dt / self.info.dt, 6) != 1.0:
+                    affected_area = kernelwidth * self.info.dt
+                    data_summed_moment[comp] = \
+                        data_summed_moment[comp][
+                        :-int(np.ceil(affected_area / dt))]
+                    data_summed_force[comp] = \
+                        data_summed_force[comp][
+                        :-int(np.ceil(affected_area / dt))]
+
+        if dt is None:
+            dt_out = new_dt
+        else:
+            dt_out = dt
+
+        # Integrate/differentiate here. No need to do it for every single
+        # seismogram and stack the errors.
+        n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
+
+        if n_derivative:
+            for comp in data_summed_moment.keys():
+                _diff_and_integrate(n_derivative=n_derivative,
+                                    data=data_summed_moment, comp=comp,
+                                    dt_out=dt_out)
+
+        n_derivative += 1
+
+        if n_derivative:
+            for comp in data_summed_force.keys():
+                _diff_and_integrate(n_derivative=n_derivative,
+                                    data=data_summed_force, comp=comp,
+                                    dt_out=dt_out)
+
+        for comp in data_summed_moment.keys():
+            data_summed[comp] = data_summed_moment[comp][:] + \
+                                data_summed_force[comp][:]
+
+        # Convert to an ObsPy Stream object.
+        st = Stream()
+        band_code = get_band_code(dt_out)
+        for comp in components:
+            tr = Trace(data=data_summed[comp],
+                       header={"delta": dt_out,
+                               "station": receiver.station,
+                               "network": receiver.network,
+                               "location": receiver.location,
+                               "channel": "%sX%s" % (band_code, comp)})
+            st += tr
+        return st
+
+    def get_seismograms_hybrid_source2(self, sources, receiver,
+                                      components=("Z", "N", "E"),
+                                      kind='displacement', dt=None,
+                                      kernelwidth=12):
+
+        """
+        Extract seismograms for a hybrid source from a local simulation.
+        :param sources: A collection of point sources.
+        :type sources: :class:`~instaseis.source.FiniteSource` or list of
+            :class:`~instaseis.source.Source` objects.
+        :param receiver: The seismic receiver.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :type components: tuple of str, optional
+        :param components: Which components to calculate. Must be a tuple
+            containing any combination of ``"Z"``, ``"N"``, ``"E"``,
+            ``"R"``, and ``"T"``. Defaults to ``["Z", "N", "E"]`` for two
+            component databases, to ``["N", "E"]`` for horizontal only
+            databases, and to ``["Z"]`` for vertical only databases.
+        :type kind: str, optional
+        :param kind: The desired units of the seismogram:
+            ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the seismograms. Resampling is done
+            using a Lanczos kernel.
+        :type kernelwidth: int, optional
+        :param kernelwidth: The width of the sinc kernel used for resampling in
+            terms of the original sampling interval. Best choose something
+            between 10 and 20.
+        :type correct_mu: bool, optional
+        :param correct_mu: Correct the source magnitude for the actual shear
+            modulus from the model.
+        :type progress_callback: function, optional
+        :param progress_callback: Optional callback function that will be
+            called with current source number and the number of total
+            sources for each calculated source. Useful for integration into
+            user interfaces to provide some kind of progress information. If
+            the callback returns ``True``, the calculation will be cancelled.
+
+        :returns: Multi component hybrid source seismogram.
+        :rtype: :class:`obspy.core.stream.Stream`
+        """
+        if components is None:
+            components = self.default_components
+
+        if not self.info.is_reciprocal:
+            raise NotImplementedError
+
+        data_summed = {}
+
+        for _i, source in enumerate(sources.pointsources):
+            # Don't perform the diff/integration here, but after the
+            # resampling later on.
+            if isinstance(source, Source):
+                kind_tmp = INV_KIND_MAP[STF_MAP[self.info.stf]]
+            elif isinstance(source, ForceSource):
+                kind_tmp = INV_KIND_MAP[STF_MAP[self.info.stf] - 1]
+            else:
+                raise NotImplementedError
+
+            data = self.get_seismograms(
+                source, receiver, components,
+                # Effectively results in nothing happening.
+                kind=kind_tmp, return_obspy_stream=False,
+                remove_source_shift=False, reconvolve_stf=True)
+
+            for comp in components:
+                if comp in data_summed:
+                    data_summed[comp] += data[comp]
+                else:
+                    data_summed[comp] = data[comp]
+
+        if dt is not None:
+            for comp in components:
+                # We don't need to align a sample to the peak of the source
+                # time function here.
+                new_npts = int(round((len(data_summed[comp]) - 1) *
+                                     self.info.dt / dt, 6) + 1)
+                data_summed[comp] = lanczos_interpolation(
+                    data=np.require(data_summed[comp],
+                                    requirements=["C"]),
+                    old_start=0, old_dt=self.info.dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                # The resampling assumes zeros outside the data range. This
+                # does not introduce any errors at the beginning as the data is
+                # actually zero there but it does affect the end. We will
+                # remove all samples that are affected by the boundary
+                # conditions here.
+                #
+                # Also don't cut it for the "identify" interpolation which is
+                # important for testing.
+                if round(dt / self.info.dt, 6) != 1.0:
+                    affected_area = kernelwidth * self.info.dt
+                    data_summed[comp] = \
+                        data_summed[comp][
+                        :-int(np.ceil(affected_area / dt))]
+
+        if dt is None:
+            dt_out = self.info.dt
+        else:
+            dt_out = dt
+
+        # Integrate/differentiate here. No need to do it for every single
+        # seismogram and stack the errors.
+
+        # stf_map is always 1, and thus
+        # displacement: n_derivative = 0 - 1 = -1
+        # velocity: n_derivative = 1 - 1 = 0
+        # acceleration: n_derivative = 2 - 1 = 1
+        # which is correct if in the first step we used gaussian stf,
+        # if used errorf we need +1
+        n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
+
+        if sources.stftype == "errorf":
+            n_derivative += 1
+
+        if n_derivative:
+            for comp in data_summed.keys():
+                _diff_and_integrate(n_derivative=n_derivative,
+                                    data=data_summed, comp=comp,
+                                    dt_out=dt_out)
+
+        # Convert to an ObsPy Stream object.
+        st = Stream()
+        band_code = get_band_code(dt_out)
+        for comp in components:
+            tr = Trace(data=data_summed[comp],
+                       header={"delta": dt_out,
+                               "station": receiver.station,
+                               "network": receiver.network,
+                               "location": receiver.location,
+                               "channel": "%sX%s" % (band_code, comp)})
+            st += tr
+        return st
+
     def _get_greens_seiscomp_sanity_checks(self, epicentral_distance_degree,
                                            source_depth_in_m, kind, dt):
         """
