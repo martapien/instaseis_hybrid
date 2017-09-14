@@ -24,6 +24,7 @@ import numpy as np
 from obspy.core import AttribDict, Stream, Trace, UTCDateTime
 from obspy.geodetics import locations2degrees
 from obspy.signal.interpolation import lanczos_interpolation
+from obspy.signal.util import next_pow_2
 from scipy.integrate import cumtrapz
 import scipy.signal
 
