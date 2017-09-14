@@ -99,5 +99,6 @@ if __version__.startswith("0.0.0-tar/zipball"):  # pragma: no cover
     warnings.warn("Please don't install from a tarball. Use the proper pypi "
                   "release or install from git.", UserWarning)
 
-
-from .source import Source, Receiver, ForceSource, FiniteSource  # NoQa
+# NoQa
+from .source import Source, Receiver, ForceSource, FiniteSource, HybridSources
+from .hybrid import hybrid_generate_output
