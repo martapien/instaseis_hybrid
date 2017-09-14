@@ -294,6 +294,9 @@ class Mesh(object):
                 self.sem_mesh = self.f["Mesh"]["sem_mesh"][:]
                 self.axis = self.f["Mesh"]["axis"][:]
                 self.mesh_mu = self.f["Mesh"]["mesh_mu"][:]
+                self.mesh_rho = self.f["Mesh"]["mesh_rho"][:]
+                self.mesh_lambda = self.f["Mesh"]["mesh_lambda"][:]
+                # TODO add anisotropic params
 
         elif self.dump_type == "fullfields" or self.dump_type == "strain_only":
             # Build a kdtree of the stored gll points.
