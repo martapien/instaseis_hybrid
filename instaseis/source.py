@@ -24,6 +24,7 @@ from obspy.signal.util import next_pow_2
 import obspy.io.xseed.parser
 import os
 from scipy import interp
+import h5py
 
 from . import ReceiverParseError, SourceParseError
 from . import rotations
@@ -611,13 +612,16 @@ class ForceSource(SourceOrReceiver):
     :param f_r: force components in r, theta, phi in N
     :param f_t: force components in r, theta, phi in N
     :param f_p: force components in r, theta, phi in N
+    :param time_shift: correction of the origin time in seconds. Useful
+        in the context of finite source or user defined source time
+        functions.
     :param origin_time: The origin time of the source. If you don't
         reconvolve with another source time function this time is the
         peak of the source time function used to generate the database.
         If you reconvolve with another source time function this time is
         the time of the first sample of the final seismogram.
     :param sliprate: normalized source time function (sliprate)
-
+    :param dt: sampling of the source time function
 
     >>> import instaseis
     >>> source = instaseis.ForceSource(latitude=12.34, longitude=12.34,
@@ -632,13 +636,16 @@ class ForceSource(SourceOrReceiver):
         Fp        :   0.00e+00 N
     """
     def __init__(self, latitude, longitude, depth_in_m=None, f_r=0., f_t=0.,
-                 f_p=0., origin_time=obspy.UTCDateTime(0), sliprate=None):
+                 f_p=0., origin_time=obspy.UTCDateTime(0), time_shift=None,
+                 sliprate=None, dt=None):
         super(ForceSource, self).__init__(latitude, longitude, depth_in_m)
         self.f_r = f_r
         self.f_t = f_t
         self.f_p = f_p
         self.origin_time = origin_time
         self.sliprate = sliprate
+        self.time_shift = time_shift
+        self.dt = dt
 
     @property
     def force_tpr(self):
@@ -655,6 +662,67 @@ class ForceSource(SourceOrReceiver):
         [f_r, f_t, f_p]
         """
         return np.array([self.f_r, self.f_t, self.f_p])
+
+    def set_sliprate(self, sliprate, dt, time_shift=None, normalize=True):
+        """
+        Add a source time function (sliprate) to a initialized source object.
+
+        :param sliprate: (normalized) sliprate
+        :param dt: sampling of the sliprate
+        :param normalize: if sliprate is not normalized, set this to true to
+            normalize it using trapezoidal rule style integration
+        """
+        self.sliprate = np.array(sliprate)
+        if normalize:
+            self.sliprate /= np.trapz(sliprate, dx=dt)
+        self.dt = dt
+        self.time_shift = time_shift
+
+    def resample_sliprate(self, dt, nsamp):
+        """
+        For convolution, the sliprate is needed at the sampling of the fields
+        in the database. This function resamples the sliprate using linear
+        interpolation.
+
+        :param dt: desired sampling
+        :param nsamp: desired number of samples
+        """
+        t_new = np.linspace(0, nsamp * dt, nsamp, endpoint=False)
+        t_old = np.linspace(0, self.dt * len(self.sliprate),
+                            len(self.sliprate), endpoint=False)
+
+        self.sliprate = interp(t_new, t_old, self.sliprate)
+        self.dt = dt
+
+    def set_sliprate_dirac(self, dt, nsamp):
+        """
+        :param dt: desired sampling
+        :param nsamp: desired number of samples
+        """
+        self.sliprate = np.zeros(nsamp)
+        self.sliprate[0] = 1.0 / dt
+        self.dt = dt
+
+    def set_sliprate_lp(self, dt, nsamp, freq, corners=4, zerophase=False):
+        """
+        :param dt: desired sampling
+        :param nsamp: desired number of samples
+        """
+        self.sliprate = np.zeros(nsamp)
+        self.sliprate[0] = 1.0 / dt
+        self.sliprate = lowpass(self.sliprate, freq, 1. / dt, corners,
+                                zerophase)
+        self.dt = dt
+
+    def normalize_sliprate(self):
+        """
+        normalize the sliprate using trapezoidal rule
+        """
+        self.sliprate /= np.trapz(self.sliprate, dx=self.dt)
+
+    def lp_sliprate(self, freq, corners=4, zerophase=False):
+        self.sliprate = lowpass(self.sliprate, freq, 1. / self.dt, corners,
+                                zerophase)
 
     def __str__(self):
         return_str = 'Instaseis Force Source:\n'
@@ -716,6 +784,7 @@ class Receiver(SourceOrReceiver):
         return_str = 'Instaseis Receiver:\n'
         return_str += '\tLongitude : %6.1f deg\n' % (self.longitude)
         return_str += '\tLatitude  : %6.1f deg\n' % (self.latitude)
+        return_str += '\tDepth  : %f m\n' % (self.depth_in_m)
         return_str += '\tNetwork   : %s\n' % (self.network)
         return_str += '\tStation   : %s\n' % (self.station)
         return_str += '\tLocation  : %s\n' % (self.location)
@@ -1485,3 +1554,165 @@ class FiniteSource(object):
                       % (self.hypocenter_longitude)
 
         return return_str
+
+
+class HybridSources(object):
+    """
+    A class to handle hybrid sources (force and moment tensor point
+    sources). The sources are defined from the fields extracted
+    from the local hybrid solver.
+
+    :param fieldsfile: File containing displacement and strain from the
+        local hybrid solver.
+    :type fieldsfile: str
+    :param coordsfile: File containing the coordinates and normals in
+        spherical coordinates (rtp)
+    :type coordsfile: str
+    """
+
+    def __init__(self, fieldsfile=None, coordsfile=None):
+        self.pointsources = self._create_pointsources(fieldsfile, coordsfile)
+
+    def __len__(self):
+        return len(self.pointsources)
+
+    def __getitem__(self, index):
+        return self.pointsources[index]
+
+    def _create_pointsources(self, fieldsfile, coordsfile):
+        """generate point sources from local simulation fields"""
+
+        f_fields = h5py.File(fieldsfile, "r")
+        f_coords = h5py.File(coordsfile, "r")
+
+        fields_npoints = f_fields['spherical'].attrs['points-number']
+        coords_npoints = f_coords['spherical'].attrs['points-number']
+
+        if coords_npoints != fields_npoints:
+            raise ValueError("The number of points in the fieldsfile and in "
+                             "coordsfile must be the same.")
+
+        n = f_coords['spherical/normals']
+        areas = f_coords['spherical/areas']
+        tpr = f_coords['spherical/coordinates']
+        mu_all = f_coords['elastic_params/mu']
+        lbd_all = f_coords['elastic_params/lambda']
+
+        dt = f_fields['spherical/velocity'].attrs['dt']
+        displ_all = f_fields['spherical/velocity']
+        strain_all = f_fields['spherical/strain']
+
+        pointsources = []
+
+        for i in np.arange(fields_npoints):
+
+            normal = n[i, :]
+            area = areas[i]
+
+            latitude = 90.0 - tpr[i, 0]
+            longitude = tpr[i, 1]
+            depth_in_m = 6371000.0 - tpr[i, 2]
+
+            displ = displ_all[i, :, :]
+            strain = strain_all[i, :, :]
+            mu = mu_all[i]
+            lbd = lbd_all[i]
+            # review -- stfs bandlimited for reconvolution to be stable later?
+
+            # append moment tensor sources
+            # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
+            stf0 = -np.array(displ[:, 0])
+            stf1 = -np.array(displ[:, 1])
+            stf2 = -np.array(displ[:, 2])
+
+            m_tt = (lbd + 2.0 * mu) * normal[0] * area
+            m_pp = lbd * normal[0] * area
+            m_rr = lbd * normal[0] * area
+            m_rp = 0.0
+            m_rt = mu * normal[2] * area
+            m_tp = mu * normal[1] * area
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=stf0, dt=dt))
+            m_tt = lbd * normal[1] * area
+            m_pp = (lbd + 2.0 * mu) * normal[1] * area
+            m_rr = lbd * normal[1] * area
+            m_rp = mu * normal[2] * area
+            m_rt = 0.0
+            m_tp = mu * normal[0] * area
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=stf1, dt=dt))
+            m_tt = lbd * normal[2] * area
+            m_pp = lbd * normal[2] * area
+            m_rr = (lbd + 2.0 * mu) * normal[2] * area
+            m_rp = mu * normal[1] * area
+            m_rt = mu * normal[0] * area
+            m_tp = 0.0
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=stf2, dt=dt))
+
+            # append force sources
+            # define forces f_r, f_t, f_p from strain
+
+            stf0 = np.array(strain[:, 0])
+            stf1 = np.array(strain[:, 1])
+            stf2 = np.array(strain[:, 2])
+            stf3 = np.array(strain[:, 3])
+            stf4 = np.array(strain[:, 4])
+            stf5 = np.array(strain[:, 5])
+
+            f_t = normal[0] * (lbd + 2.0 * mu) * area
+            f_p = normal[1] * lbd * area
+            f_r = normal[2] * lbd * area
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf0, dt=dt))
+            f_t = normal[0] * lbd * area
+            f_p = normal[1] * (lbd + 2.0 * mu) * area
+            f_r = normal[2] * lbd * area
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf1, dt=dt))
+            f_t = normal[0] * lbd * area
+            f_p = normal[1] * lbd * area
+            f_r = normal[2] * (lbd + 2.0 * mu) * area
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf2, dt=dt))
+            f_t = 0.0
+            f_p = 2.0 * normal[2] * mu * area
+            f_r = 2.0 * normal[1] * mu * area
+            pointsources.append(ForceSource(latitude, longitude, depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf3, dt=dt))
+            f_t = 2.0 * normal[2] * mu * area
+            f_p = 0.0
+            f_r = 2.0 * normal[0] * mu * area
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf4, dt=dt))
+            f_t = 2.0 * normal[1] * mu * area
+            f_p = 2.0 * normal[0] * mu * area
+            f_r = 0.0
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=f_r, f_t=f_t, f_p=f_p,
+                                            sliprate=stf5, dt=dt))
+
+        return pointsources
+
+    def lp_sliprate(self, freq, corners=4, zerophase=False):
+        for ps in self.pointsources:
+            ps.lp_sliprate(freq, corners, zerophase)
