@@ -1592,124 +1592,115 @@ class HybridSources(object):
             raise ValueError("The number of points in the fieldsfile and in "
                              "coordsfile must be the same.")
 
-        n = f_coords['spherical/normals']
-        areas = f_coords['spherical/areas']
+        normals = f_coords['spherical/normals']
+        weights = f_coords['spherical/weights']
         tpr = f_coords['spherical/coordinates']
         mu_all = f_coords['elastic_params/mu']
         lbd_all = f_coords['elastic_params/lambda']
 
         dt = f_fields['spherical/velocity'].attrs['dt']
         displ_all = f_fields['spherical/velocity']
-        strain_all = f_fields['spherical/strain']
 
+        traction_all = None
+        strain_all = None
+        if 'spherical/traction' in f_fields:
+            traction_all = f_fields['spherical/traction']
+        elif 'spherical/strain' in f_fields:
+            strain_all = f_fields['spherical/strain']
+        else:
+            ValueError("Need strains or tractions to repropagate field via "
+                       "hybrid sources.")
         pointsources = []
 
         for i in np.arange(fields_npoints):
-
-            normal = n[i, :]
-            area = areas[i]
-
+            n = normals[i, :]
+            w = weights[i]
             latitude = 90.0 - tpr[i, 0]
             longitude = tpr[i, 1]
             depth_in_m = 6371000.0 - tpr[i, 2]
-
             displ = displ_all[i, :, :]
-            strain = strain_all[i, :, :]
             mu = mu_all[i]
             lbd = lbd_all[i]
             # review -- stfs bandlimited for reconvolution to be stable later?
 
             # append moment tensor sources
             # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-            stf0 = -np.array(displ[:, 0])
-            stf1 = -np.array(displ[:, 1])
-            stf2 = -np.array(displ[:, 2])
+            d0 = -np.array(displ[:, 0])  # theta
+            d1 = -np.array(displ[:, 1])  # phi
+            d2 = -np.array(displ[:, 2])  # r
 
-            m_tt = (lbd + 2.0 * mu) * normal[0] * area
-            m_pp = lbd * normal[0] * area
-            m_rr = lbd * normal[0] * area
+            m_tt = (lbd + 2.0 * mu) * n[0] * w
+            m_pp = lbd * n[0] * w
+            m_rr = lbd * n[0] * w
             m_rp = 0.0
-            m_rt = mu * normal[2] * area
-            m_tp = mu * normal[1] * area
+            m_rt = mu * n[2] * w
+            m_tp = mu * n[1] * w
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
                                        m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf0, dt=dt))
-            m_tt = lbd * normal[1] * area
-            m_pp = (lbd + 2.0 * mu) * normal[1] * area
-            m_rr = lbd * normal[1] * area
-            m_rp = mu * normal[2] * area
+                                       sliprate=d0, dt=dt))
+            m_tt = lbd * n[1] * w
+            m_pp = (lbd + 2.0 * mu) * n[1] * w
+            m_rr = lbd * n[1] * w
+            m_rp = mu * n[2] * w
             m_rt = 0.0
-            m_tp = mu * normal[0] * area
+            m_tp = mu * n[0] * w
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
                                        m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf1, dt=dt))
-            m_tt = lbd * normal[2] * area
-            m_pp = lbd * normal[2] * area
-            m_rr = (lbd + 2.0 * mu) * normal[2] * area
-            m_rp = mu * normal[1] * area
-            m_rt = mu * normal[0] * area
+                                       sliprate=d1, dt=dt))
+            m_tt = lbd * n[2] * w
+            m_pp = lbd * n[2] * w
+            m_rr = (lbd + 2.0 * mu) * n[2] * w
+            m_rp = mu * n[1] * w
+            m_rt = mu * n[0] * w
             m_tp = 0.0
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
                                        m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf2, dt=dt))
+                                       sliprate=d2, dt=dt))
 
             # append force sources
             # define forces f_r, f_t, f_p from strain
 
-            stf0 = np.array(strain[:, 0])
-            stf1 = np.array(strain[:, 1])
-            stf2 = np.array(strain[:, 2])
-            stf3 = np.array(strain[:, 3])
-            stf4 = np.array(strain[:, 4])
-            stf5 = np.array(strain[:, 5])
+            if traction_all is not None:
+                traction = traction_all[i, :, :]
+                t0 = np.array(traction[:, 0])  # theta
+                t1 = np.array(traction[:, 1])  # phi
+                t2 = np.array(traction[:, 2])  # r
+            else:
+                strain = strain_all[i, :, :]
+                t0 = np.array(strain[:, 0]) * n[0] * (lbd + 2.0 * mu) \
+                    + np.array(strain[:, 1]) * n[0] * lbd \
+                    + np.array(strain[:, 2]) * n[0] * lbd \
+                    + 2.0 * n[1] * mu * np.array(strain[:, 5]) \
+                    + 2.0 * n[2] * mu * np.array(strain[:, 4])
+                t1 = 2.0 * n[0] * mu * np.array(strain[:, 5]) \
+                    + n[1] * lbd * np.array(strain[:, 0]) \
+                    + n[1] * (lbd + 2.0 * mu) * np.array(strain[:, 1]) \
+                    + n[1] * lbd * np.array(strain[:, 2]) \
+                    + 2.0 * n[2] * mu * np.array(strain[:, 3])
+                t2 = 2.0 * n[0] * mu * np.array(strain[:, 4]) \
+                    + 2.0 * n[1] * mu * np.array(strain[:, 3]) \
+                    + n[2] * lbd * np.array(strain[:, 0]) \
+                    + n[2] * lbd * np.array(strain[:, 1]) \
+                    + n[2] * (lbd + 2.0 * mu) * np.array(strain[:, 2])
 
-            f_t = normal[0] * (lbd + 2.0 * mu) * area
-            f_p = normal[1] * lbd * area
-            f_r = normal[2] * lbd * area
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf0, dt=dt))
-            f_t = normal[0] * lbd * area
-            f_p = normal[1] * (lbd + 2.0 * mu) * area
-            f_r = normal[2] * lbd * area
+                                            f_r=0, f_t=w, f_p=0,
+                                            sliprate=t0, dt=dt))
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf1, dt=dt))
-            f_t = normal[0] * lbd * area
-            f_p = normal[1] * lbd * area
-            f_r = normal[2] * (lbd + 2.0 * mu) * area
+                                            f_r=0, f_t=0, f_p=w,
+                                            sliprate=t1, dt=dt))
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf2, dt=dt))
-            f_t = 0.0
-            f_p = 2.0 * normal[2] * mu * area
-            f_r = 2.0 * normal[1] * mu * area
-            pointsources.append(ForceSource(latitude, longitude, depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf3, dt=dt))
-            f_t = 2.0 * normal[2] * mu * area
-            f_p = 0.0
-            f_r = 2.0 * normal[0] * mu * area
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf4, dt=dt))
-            f_t = 2.0 * normal[1] * mu * area
-            f_p = 2.0 * normal[0] * mu * area
-            f_r = 0.0
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=f_t, f_p=f_p,
-                                            sliprate=stf5, dt=dt))
+                                            f_r=w, f_t=0, f_p=0,
+                                            sliprate=t2, dt=dt))
 
         return pointsources
 
