@@ -719,7 +719,7 @@ class HybridReceiversBoundaryInternalTest(object):
                                       compression="gzip", compression_opts=4)
             dset = grp.create_dataset("normals", data=normals,
                                       compression="gzip", compression_opts=4)
-            dset = grp.create_dataset("areas", data=areas,
+            dset = grp.create_dataset("weights", data=areas,
                                       compression="gzip", compression_opts=4)
             grp.attrs['points-number'] = centroids.shape[0]
             f.close()
