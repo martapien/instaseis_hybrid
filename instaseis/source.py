@@ -1702,8 +1702,8 @@ class HybridSources(object):
                                        sliprate=d2, dt=dt))
 
             # append force sources
-            # define forces f_r, f_t, f_p from strain
-
+            # define f orces f_r, f_t, f_p from strain
+            # recall voigt in tpr: Ett Epp Err Erp Ert Etp
             if traction_all is not None:
                 traction = traction_all[i, :, :]
                 t0 = np.array(traction[:, 0])  # theta
@@ -1711,22 +1711,37 @@ class HybridSources(object):
                 t2 = np.array(traction[:, 2])  # r
             else:
                 strain = strain_all[i, :, :]
-                t0 = np.array(strain[:, 0]) * n[0] * (lbd + 2.0 * mu) \
-                    + np.array(strain[:, 1]) * n[0] * lbd \
-                    + np.array(strain[:, 2]) * n[0] * lbd \
-                    + 2.0 * n[1] * mu * np.array(strain[:, 5]) \
-                    + 2.0 * n[2] * mu * np.array(strain[:, 4])
-                t1 = 2.0 * n[0] * mu * np.array(strain[:, 5]) \
-                    + n[1] * lbd * np.array(strain[:, 0]) \
-                    + n[1] * (lbd + 2.0 * mu) * np.array(strain[:, 1]) \
-                    + n[1] * lbd * np.array(strain[:, 2]) \
-                    + 2.0 * n[2] * mu * np.array(strain[:, 3])
+                e_tt = np.array(strain[:, 0])
+                e_pp = np.array(strain[:, 1])
+                e_rr = np.array(strain[:, 2])
+                e_rp = np.array(strain[:, 3])
+                e_rt = np.array(strain[:, 4])
+                e_tp = np.array(strain[:, 5])
+
+                t0 = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt + c_12 * e_pp +
+                             c_13 * e_rr) + \
+                     n[1] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
+                     n[2] * (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr + 2.0 *
+                             c_55 * e_rt)
+
+                t1 = n[0] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
+                     n[1] * (c_12 * e_tt + 2.0 * c_25 * e_rt + c_22 * e_pp +
+                             c_23 * e_rr) + \
+                     n[2] * 2.0 * (c_46 * e_tp + c_44 * e_rp)
+
+                t2 = n[0] * (c_15 * e_tt + 2.0 * c_55 * e_rt + c_25 * e_pp +
+                             c_35 * e_rr) + \
+                     n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
+                     n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
+                             c_33 * e_rr)
+
+                """
                 t2 = 2.0 * n[0] * mu * np.array(strain[:, 4]) \
                     + 2.0 * n[1] * mu * np.array(strain[:, 3]) \
                     + n[2] * lbd * np.array(strain[:, 0]) \
                     + n[2] * lbd * np.array(strain[:, 1]) \
                     + n[2] * (lbd + 2.0 * mu) * np.array(strain[:, 2])
-
+                """
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
                                             f_r=0, f_t=w, f_p=0,
