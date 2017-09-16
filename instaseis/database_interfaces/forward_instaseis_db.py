@@ -173,25 +173,40 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
             if self.info.dump_type != 'displ_only':
                 raise NotImplementedError
 
-            # Get elastic parametres.
+            # review do we want that here? Get elastic parameters.
             elastic_params = {}
             if not self.read_on_demand:
                 mesh_mu = self.parsed_mesh.mesh_mu
                 mesh_rho = self.parsed_mesh.mesh_rho
                 mesh_lambda = self.parsed_mesh.mesh_lambda
+                #mesh_xi_ani = self.parsed_mesh.mesh_xi_ani
+                #mesh_phi_ani = self.parsed_mesh.mesh_phi_ani
+                #mesh_eta_ani = self.self.parsed_mesh.mesh_eta_ani
             else:
                 mesh_mu = mesh["mesh_mu"]
                 mesh_rho = mesh["mesh_rho"]
                 mesh_lambda = mesh["mesh_lambda"]
+                #mesh_xi_ani = mesh["mesh_xi_ani"]
+                #mesh_phi_ani = mesh["mesh_phi_ani"]
+                #mesh_eta_ani = mesh["mesh_eta_ani"]
+
 
             npol = self.info.spatial_order
             mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
             rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
             lambd = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+#            xi_ani = mesh_xi_ani[ei.gll_point_ids[npol // 2, npol // 2]]
+#            phi_ani = mesh_phi_ani[ei.gll_point_ids[npol // 2, npol // 2]]
+#            eta_ani = mesh_eta_ani[ei.gll_point_ids[npol // 2, npol // 2]]
 
             elastic_params["mu"] = mu
             elastic_params["rho"] = rho
             elastic_params["lambda"] = lambd
+#            elastic_params["xi_ani"] = xi_ani
+#            elastic_params["phi_ani"] = phi_ani
+#            elastic_params["eta_ani"] = eta_ani
+#            elastic_params["fa_ani_theta"] = fa_ani_theta
+#            elastic_params["fa_ani_phi"] = fa_ani_phi
 
             if "strain" in components:
                 if ei.axis:

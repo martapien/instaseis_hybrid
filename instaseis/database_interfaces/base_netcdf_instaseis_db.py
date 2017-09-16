@@ -567,10 +567,16 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
     def get_elastic_params(self, source, receivers, outfile):
 
+        if self.info.dump_type != 'displ_only':
+            raise NotImplementedError
+
         npoints = len(receivers.network[0])
         mu = np.zeros(npoints)
         rho = np.zeros(npoints)
         lbda = np.zeros(npoints)
+        xi = np.zeros(npoints)
+        phi = np.zeros(npoints)
+        eta = np.zeros(npoints)
 
         i = 0
         for receiver in receivers.network[0]:
@@ -594,24 +600,48 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
                 mesh_mu = self.parsed_mesh.mesh_mu
                 mesh_rho = self.parsed_mesh.mesh_rho
                 mesh_lambda = self.parsed_mesh.mesh_lambda
+                mesh_xi = self.parsed_mesh.mesh_xi
+                mesh_phi = self.parsed_mesh.mesh_phi
+                mesh_eta = self.parsed_mesh.mesh_eta
+
             else:
                 mesh_mu = mesh["mesh_mu"]
                 mesh_rho = mesh["mesh_rho"]
                 mesh_lambda = mesh["mesh_lambda"]
+                mesh_xi = mesh["mesh_xi"]
+                mesh_phi = mesh["mesh_phi"]
+                mesh_eta = mesh["mesh_eta"]
 
-            if self.info.dump_type == "displ_only":
-                npol = self.info.spatial_order
-                mu[i] = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
-                rho[i] = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
-                lbda[i] = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
-            else:
-                mu[i] = mesh_mu[ei.id_elem]
-                rho[i] = mesh_rho[ei.id_elem]
-                lbda[i] = mesh_lambda[ei.id_elem]
+            npol = self.info.spatial_order
+            mu[i] = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+            rho[i] = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+            lbda[i] = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+            xi[i] = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
+            phi[i] = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
+            eta[i] = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
+
             i += 1
         f = h5py.File(outfile, "a")
         grp = f.create_group('elastic_params')
-        dset = grp.create_dataset('mu', data=mu)
-        dset = grp.create_dataset('rho', data=rho)
-        dset = grp.create_dataset('lambda', data=lbda)
+        compression = 4
+        dset = grp.create_dataset('mu', data=mu,
+                                       compression="gzip",
+                                       compression_opts=compression)
+        dset = grp.create_dataset('rho', data=rho,
+                                        compression="gzip",
+                                        compression_opts=compression)
+        dset = grp.create_dataset('lambda', data=lbda,
+                                           compression="gzip",
+                                           compression_opts=compression)
+        dset = grp.create_dataset('xi', data=xi,
+                                       compression="gzip",
+                                       compression_opts=compression)
+        dset = grp.create_dataset('phi', data=phi,
+                                       compression="gzip",
+                                       compression_opts=compression)
+        dset = grp.create_dataset('eta', data=eta,
+                                       compression="gzip",
+                                       compression_opts=compression)
+
         f.close()
+

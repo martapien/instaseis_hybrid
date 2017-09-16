@@ -25,6 +25,7 @@ import obspy.io.xseed.parser
 import os
 from scipy import interp
 import h5py
+from math import cos, sin
 
 from . import ReceiverParseError, SourceParseError
 from . import rotations
@@ -144,7 +145,7 @@ def strike_dip_rake_from_ln(l, n):
     delta = np.arccos(n_norm[2])
     phi = np.arctan2(n_norm[0], n_norm[1])
 
-    # needs two different formulas, beqause the first is unstable for dip = 0
+    # needs two different formuas, beqause the first is unstable for dip = 0
     # and the second for dip = 90
     if delta > 0.1:
         lambd = np.arctan2(
@@ -1597,6 +1598,9 @@ class HybridSources(object):
         tpr = f_coords['spherical/coordinates']
         mu_all = f_coords['elastic_params/mu']
         lbd_all = f_coords['elastic_params/lambda']
+        xi_all = f_coords['elastic_params/xi']
+        phi_all = f_coords['elastic_params/phi']
+        eta_all = f_coords['elastic_params/eta']
 
         dt = f_fields['spherical/velocity'].attrs['dt']
         displ_all = f_fields['spherical/velocity']
@@ -1619,8 +1623,42 @@ class HybridSources(object):
             longitude = tpr[i, 1]
             depth_in_m = 6371000.0 - tpr[i, 2]
             displ = displ_all[i, :, :]
+
             mu = mu_all[i]
             lbd = lbd_all[i]
+            xi = xi_all[i]
+            phi = phi_all[i]
+            eta = eta_all[i]
+            fa_ani_thetal = 0.0
+            fa_ani_phil = 0.0
+
+            c_11 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 0, 0, 0, 0)
+            c_12 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 0, 0, 1, 1)
+            c_13 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 0, 0, 2, 2)
+            c_15 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 0, 0, 2, 0)
+            c_22 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 1, 1, 1, 1)
+            c_23 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 1, 1, 2, 2)
+            c_25 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 1, 1, 2, 0)
+            c_33 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 2, 2, 2, 2)
+            c_35 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 2, 2, 2, 0)
+            c_44 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 1, 2, 1, 2)
+            c_46 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 1, 2, 0, 1)
+            c_55 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 2, 0, 2, 0)
+            c_66 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                                   fa_ani_phil, 0, 1, 0, 1)
+
             # review -- stfs bandlimited for reconvolution to be stable later?
 
             # append moment tensor sources
@@ -1629,34 +1667,34 @@ class HybridSources(object):
             d1 = -np.array(displ[:, 1])  # phi
             d2 = -np.array(displ[:, 2])  # r
 
-            m_tt = (lbd + 2.0 * mu) * n[0] * w
-            m_pp = lbd * n[0] * w
-            m_rr = lbd * n[0] * w
-            m_rp = 0.0
-            m_rt = mu * n[2] * w
-            m_tp = mu * n[1] * w
+            m_tt = (c_11 * n[0] + c_15 * n[2]) * w
+            m_pp = (c_12 * n[0] + c_25 * n[2]) * w
+            m_rr = (c_13 * n[0] + c_35 * n[2]) * w
+            m_rp = c_46 * n[1] * w  # = 0 for isotropy
+            m_rt = (c_55 * n[2] + c_15 * n[0]) * w
+            m_tp = c_66 * n[1] * w
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
                                        m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
                                        sliprate=d0, dt=dt))
-            m_tt = lbd * n[1] * w
-            m_pp = (lbd + 2.0 * mu) * n[1] * w
-            m_rr = lbd * n[1] * w
-            m_rp = mu * n[2] * w
-            m_rt = 0.0
-            m_tp = mu * n[0] * w
+            m_tt = c_12 * n[1] * w
+            m_pp = c_22 * n[1] * w
+            m_rr = c_23 * n[1] * w
+            m_rp = (c_44 * n[2] + c_46 * n[0]) * w
+            m_rt = c_25 * n[1] * w  # = 0 for isotropy
+            m_tp = (c_66 * n[0] + c_46 * n[2]) * w
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
                                        m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
                                        sliprate=d1, dt=dt))
-            m_tt = lbd * n[2] * w
-            m_pp = lbd * n[2] * w
-            m_rr = (lbd + 2.0 * mu) * n[2] * w
-            m_rp = mu * n[1] * w
-            m_rt = mu * n[0] * w
-            m_tp = 0.0
+            m_tt = (c_13 * n[2] + c_15 * n[0]) * w
+            m_pp = (c_23 * n[2] + c_25 * n[0]) * w
+            m_rr = (c_33 * n[2] + c_35 * n[0]) * w
+            m_rp = c_44 * n[1] * w
+            m_rt = (c_55 * n[0] + c_35 * n[2]) * w
+            m_tp = c_46 * n[1] * w  # = 0 for isotropy
             pointsources.append(Source(latitude, longitude,
                                        depth_in_m=depth_in_m,
                                        m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
@@ -1703,6 +1741,45 @@ class HybridSources(object):
                                             sliprate=t2, dt=dt))
 
         return pointsources
+
+    def _c_ijkl_ani(self, lbd , mu, xi_ani, phi_ani, eta_ani,
+                   theta_fa, phi_fa, i, j, k, l):
+
+        deltaf = np.zeros([3,3])
+        deltaf[0, 0] = 1.
+        deltaf[1, 1] = 1
+        deltaf[2, 2] = 1
+
+        s = np.zeros(3) #  for transverse anisotropy
+        s[0] = cos(phi_fa) * sin(theta_fa)  # 0.0
+        s[1] = sin(phi_fa) * sin(theta_fa)  # 0.0
+        s[2] = cos(theta_fa)  # 1.0
+
+        c_ijkl_ani = 0.0
+
+        # isotropic part:
+        c_ijkl_ani += lbd * deltaf[i, j] * deltaf[k, l]
+
+        c_ijkl_ani += mu * (deltaf[i, k] * deltaf[j, l]
+                            + deltaf[i, l] * deltaf[j, k])
+
+
+        # anisotropic part in xi, phi, eta
+        c_ijkl_ani += ((eta_ani - 1.0) * lbd + 2.0 * eta_ani * mu *
+                       (1.0 - 1.0 / xi_ani)) * (deltaf[i, j] * s[k] * s[l]
+                                                + deltaf[k, l] * s[i] * s[j])
+
+        c_ijkl_ani += mu * (1.0 / xi_ani - 1.0) *\
+                      (deltaf[i, k] * s[j] * s[l]
+                       + deltaf[i, l] * s[j] * s[k]
+                       + deltaf[j, k] * s[i] * s[l]
+                       + deltaf[j, l] * s[i] * s[k])
+
+        c_ijkl_ani += ((1.0 - 2.0 * eta_ani + phi_ani) * (lbd + 2.0 * mu)
+                       + (4. * eta_ani - 4.) * mu / xi_ani)\
+                       * (s[i] * s[j] * s[k] * s[l])
+
+        return c_ijkl_ani
 
     def lp_sliprate(self, freq, corners=4, zerophase=False):
         for ps in self.pointsources:
