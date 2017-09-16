@@ -15,10 +15,9 @@ from __future__ import (absolute_import, division, print_function,
 import numpy as np
 import h5py
 from math import cos, sin
-from scipy.integrate import cumtrapz
 
 from . import rotations
-from .source import (Source, ForceSource, Receiver)
+from .source import Receiver
 
 
 def hybrid_generate_output(outputfile, inputfile, source, database, dt,
@@ -384,361 +383,11 @@ def _c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
     return c_ijkl_ani
 
 
-class HybridSourcesInternalTest(object):
-    """
-    A class to handle hybrid sources represented by force and moment
-    tensor point sources. In this test, we differentiate/integrate the 
-    displacement/strain (respectively) and then differentiate/integrate the 
-    final result in get_seismograms_hybrid_source.
-
-    :param receivers: The list of receivers to define appropriate point sources.
-    :type receivers: list of :class:`~instaseis.Receiver` objects
-    :param database: The forward database to define point sources.
-    :type database: :class: '~instaseis.InstaseisDB' object
-    :param source: The source of the forward/background field
-    :type source: :class: '~instaseis.source.Source' object
-    """
-
-    def __init__(self, receivers=None, database=None, source=None):
-        self.receivers = receivers
-        self.database = database
-        self.pointsources = self._from_database(receivers, database, source)
-
-    def __len__(self):
-        return len(self.pointsources)
-
-    def __getitem__(self, index):
-        return self.pointsources[index]
-
-    def _from_database(self, receivers, database, source):
-        """generate point sources from database and receivers"""
-
-        normals = receivers[1]
-        areas = receivers[2]
-        receivers = receivers[0]
-
-        # Check the bounds of the hybrid source to make sure they can be
-        # calculated with the database.
-
-        min_depth = min(_i.depth_in_m for _i in receivers)
-        max_depth = max(_i.depth_in_m for _i in receivers)
-
-        db_min_depth = self.database.info.planet_radius - \
-            self.database.info.max_radius
-        db_max_depth = self.database.info.planet_radius - \
-            self.database.info.min_radius
-
-        if not (db_min_depth <= min_depth <= db_max_depth):
-            raise ValueError("The shallowest receiver to construct a hybrid src"
-                             " is %.1f km deep. The database only has a depth "
-                             "range from %.1f km to %.1f km." % (
-                                 min_depth / 1000.0, db_min_depth / 1000.0,
-                                 db_max_depth / 1000.0))
-
-        if not (db_min_depth <= max_depth <= db_max_depth):
-            raise ValueError("The deepest receiver to construct a hybrid src"
-                             " is %.1f km deep. The database only has a depth "
-                             "range from %.1f km to %.1f km." % (
-                                 max_depth / 1000.0, db_min_depth / 1000.0,
-                                 db_max_depth / 1000.0))
-        pointsources = []
-        rec_counter = 0
-
-        dt_old = database.info.dt
-        dt = dt_old / 10.0
-
-        if database.info.stf == "errorf":
-            dumpfields = ("velocity", "strain")
-        else:
-            dumpfields = ("displacement", "strain")
-
-        for rec in receivers:
-            normal = normals[rec_counter]
-            area = areas[rec_counter]
-            rec_counter += 1
-
-            latitude = rec.latitude
-            longitude = rec.longitude
-            depth_in_m = rec.depth_in_m
-
-            data = database.get_data_hybrid(
-                source=source, receiver=rec, dt=dt,
-                dumpfields=dumpfields)
-
-            if database.info.stf == "errorf":
-                displ = data["velocity"]
-                strain = data["strain"]
-            elif database.info.stf == "gauss_0":
-                displ = data["displacement"]
-                strain = data["strain"]
-            else:
-                raise NotImplementedError('Implemented only for forward '
-                                          'gauss_0 and errorf stfs')
-
-            mu = data["elastic_params"]["mu"]
-            lbd = data["elastic_params"]["lambda"]
-
-            normal = rotations.rotate_vector_xyz_earth_to_xyz_src(
-                normal, rec.longitude_rad, rec.colatitude_rad)
-            normal *= -1.0
-
-            # append moment tensor sources
-            # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-
-            stf0 = -np.array(displ[:, 0])
-            stf1 = -np.array(displ[:, 1])
-            stf2 = -np.array(displ[:, 2])
-
-            m_tt = (lbd + 2.0 * mu) * normal[0] * area
-            m_pp = lbd * normal[0] * area
-            m_rr = lbd * normal[0] * area
-            m_rp = 0.0
-            m_rt = mu * normal[2] * area
-            m_tp = mu * normal[1] * area
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf0, dt=dt))
-            m_tt = lbd * normal[1] * area
-            m_pp = (lbd + 2.0 * mu) * normal[1] * area
-            m_rr = lbd * normal[1] * area
-            m_rp = mu * normal[2] * area
-            m_rt = 0.0
-            m_tp = mu * normal[0] * area
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf1, dt=dt))
-            m_tt = lbd * normal[2] * area
-            m_pp = lbd * normal[2] * area
-            m_rr = (lbd + 2.0 * mu) * normal[2] * area
-            m_rp = mu * normal[1] * area
-            m_rt = mu * normal[0] * area
-            m_tp = 0.0
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf2, dt=dt))
-
-            # append force sources
-            # define forces f_r, f_t, f_p from strain
-            # NOTE stf0 = traction_t, stf1 = traction_p, stf2 = traction_r
-            stf0 = np.array(strain[:, 0]) * normal[0] * (lbd + 2.0 * mu) \
-                 + np.array(strain[:, 1]) * normal[0] * lbd \
-                 + np.array(strain[:, 2]) * normal[0] * lbd \
-                 + 2.0 * normal[1] * mu * np.array(strain[:, 5]) \
-                 + 2.0 * normal[2] * mu * np.array(strain[:, 4])
-
-            stf1 = 2.0 * normal[0] * mu * np.array(strain[:, 5]) \
-                 + normal[1] * lbd * np.array(strain[:, 0]) \
-                 + normal[1] * (lbd + 2.0 * mu) * np.array(strain[:, 1]) \
-                 + normal[1] * lbd * np.array(strain[:, 2]) \
-                 + 2.0 * normal[2] * mu * np.array(strain[:, 3])
-
-            stf2 = 2.0 * normal[0] * mu * np.array(strain[:, 4]) \
-                 + 2.0 * normal[1] * mu * np.array(strain[:, 3]) \
-                 + normal[2] * lbd * np.array(strain[:, 0]) \
-                 + normal[2] * lbd * np.array(strain[:, 1]) \
-                 + normal[2] * (lbd + 2.0 * mu) * np.array(strain[:, 2])
-
-            if database.info.stf == "gauss_0":
-                stf0 = cumtrapz(stf0, dx=dt, initial=0.0)
-                stf1 = cumtrapz(stf1, dx=dt, initial=0.0)
-                stf2 = cumtrapz(stf2, dx=dt, initial=0.0)
-
-            f_t = area
-            f_p = area
-            f_r = area
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=0, f_t=f_t, f_p=0,
-                                            sliprate=stf0, dt=dt))
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=0, f_t=0, f_p=f_p,
-                                            sliprate=stf1, dt=dt))
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=0, f_p=0,
-                                            sliprate=stf2, dt=dt))
-
-        return pointsources
-
-
-class HybridSourcesInternalTest2(object):
-    """
-    A class to handle hybrid sources represented by force and moment
-    tensor point sources. In this test, we do not differentiate/integrate the 
-    displacement/strain in the stfs of the sources. We then
-    differentiate/integrate accordingly the final result in 
-    get_seismograms_hybrid_source2.
-
-    :param receivers: The list of receivers to define appropriate point sources.
-    :type receivers: list of :class:`~instaseis.Receiver` objects
-    :param database: The forward database to define point sources.
-    :type database: :class: '~instaseis.InstaseisDB' object
-    :param source: The source of the forward/background field
-    :type source: :class: '~instaseis.source.Source' object
-    """
-
-    def __init__(self, receivers=None, database=None, source=None):
-        self.receivers = receivers
-        self.database = database
-        self.pointsources = self._from_database(receivers, database, source)
-        self.stftype = database.info.stf
-
-    def __len__(self):
-        return len(self.pointsources)
-
-    def __getitem__(self, index):
-        return self.pointsources[index]
-
-    def _from_database(self, receivers, database, source):
-        """generate point sources from database and receivers"""
-
-        normals = receivers[1]
-        areas = receivers[2]
-        receivers = receivers[0]
-
-        # Check the bounds of the hybrid source to make sure they can be
-        # calculated with the database.
-        min_depth = min(_i.depth_in_m for _i in receivers)
-        max_depth = max(_i.depth_in_m for _i in receivers)
-
-        db_min_depth = self.database.info.planet_radius - \
-            self.database.info.max_radius
-        db_max_depth = self.database.info.planet_radius - \
-            self.database.info.min_radius
-
-        if not (db_min_depth <= min_depth <= db_max_depth):
-            raise ValueError("The shallowest receiver to construct a hybrid src"
-                             " is %.1f km deep. The database only has a depth "
-                             "range from %.1f km to %.1f km." % (
-                                 min_depth / 1000.0, db_min_depth / 1000.0,
-                                 db_max_depth / 1000.0))
-
-        if not (db_min_depth <= max_depth <= db_max_depth):
-            raise ValueError("The deepest receiver to construct a hybrid src"
-                             " is %.1f km deep. The database only has a depth "
-                             "range from %.1f km to %.1f km." % (
-                                 max_depth / 1000.0, db_min_depth / 1000.0,
-                                 db_max_depth / 1000.0))
-        pointsources = []
-        rec_counter = 0
-
-        for rec in receivers:
-            normal = normals[rec_counter]
-            area = areas[rec_counter]
-            rec_counter += 1
-
-            latitude = rec.latitude
-            longitude = rec.longitude
-            depth_in_m = rec.depth_in_m
-            dumpfields = ("displacement", "strain")
-
-            data = database.get_data_hybrid(
-                source=source, receiver=rec, dt=database.info.dt,
-                dumpfields=dumpfields)
-
-            displ = data["displacement"]
-            strain = data["strain"]
-            mu = data["elastic_params"]["mu"]
-            lbd = data["elastic_params"]["lambda"]
-            dt = data["dt"]  # = database.info.dt
-
-            normal = rotations.rotate_vector_xyz_earth_to_xyz_src(
-                normal, rec.longitude_rad, rec.colatitude_rad)
-            normal *= -1.0
-
-            # append moment tensor sources
-            # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-
-            stf0 = -np.array(displ[:, 0])
-            stf1 = -np.array(displ[:, 1])
-            stf2 = -np.array(displ[:, 2])
-
-            m_tt = (lbd + 2.0 * mu) * normal[0] * area
-            m_pp = lbd * normal[0] * area
-            m_rr = lbd * normal[0] * area
-            m_rp = 0.0
-            m_rt = mu * normal[2] * area
-            m_tp = mu * normal[1] * area
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf0, dt=dt))
-            m_tt = lbd * normal[1] * area
-            m_pp = (lbd + 2.0 * mu) * normal[1] * area
-            m_rr = lbd * normal[1] * area
-            m_rp = mu * normal[2] * area
-            m_rt = 0.0
-            m_tp = mu * normal[0] * area
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf1, dt=dt))
-            m_tt = lbd * normal[2] * area
-            m_pp = lbd * normal[2] * area
-            m_rr = (lbd + 2.0 * mu) * normal[2] * area
-            m_rp = mu * normal[1] * area
-            m_rt = mu * normal[0] * area
-            m_tp = 0.0
-            pointsources.append(Source(latitude, longitude,
-                                       depth_in_m=depth_in_m,
-                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                       sliprate=stf2, dt=dt))
-
-            # append force sources
-            # define forces f_r, f_t, f_p from strain
-            # NOTE stf0 = traction_t, stf1 = traction_p, stf2 = traction_r
-            stf0 = np.array(strain[:, 0]) * normal[0] * (lbd + 2.0 * mu) \
-                   + np.array(strain[:, 1]) * normal[0] * lbd \
-                   + np.array(strain[:, 2]) * normal[0] * lbd \
-                   + 2.0 * normal[1] * mu * np.array(strain[:, 5]) \
-                   + 2.0 * normal[2] * mu * np.array(strain[:, 4])
-
-            stf1 = 2.0 * normal[0] * mu * np.array(strain[:, 5]) \
-                   + normal[1] * lbd * np.array(strain[:, 0]) \
-                   + normal[1] * (lbd + 2.0 * mu) * np.array(strain[:, 1]) \
-                   + normal[1] * lbd * np.array(strain[:, 2]) \
-                   + 2.0 * normal[2] * mu * np.array(strain[:, 3])
-
-            stf2 = 2.0 * normal[0] * mu * np.array(strain[:, 4]) \
-                   + 2.0 * normal[1] * mu * np.array(strain[:, 3]) \
-                   + normal[2] * lbd * np.array(strain[:, 0]) \
-                   + normal[2] * lbd * np.array(strain[:, 1]) \
-                   + normal[2] * (lbd + 2.0 * mu) * np.array(strain[:, 2])
-
-            f_t = area
-            f_p = area
-            f_r = area
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=0, f_t=f_t, f_p=0,
-                                            sliprate=stf0, dt=dt))
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=0, f_t=0, f_p=f_p,
-                                            sliprate=stf1, dt=dt))
-            pointsources.append(ForceSource(latitude, longitude,
-                                            depth_in_m=depth_in_m,
-                                            f_r=f_r, f_t=0, f_p=0,
-                                            sliprate=stf2, dt=dt))
-
-        return pointsources
-
-
 class HybridReceiversBoundaryInternalTest(object):
     """Instaseis Internal Test
      a class to generate a network of receivers"""
-    def __init__(self, latitude, longitude, depth_in_m, radius=45000,
-                 recursion_level=3, save_hdf5=False, savepath=None):
+    def __init__(self, latitude, longitude, depth_in_m, savepath, radius=45000,
+                 recursion_level=3):
         self.latitude = float(latitude)
         self.longitude = float(longitude)
         self.depth_in_m = float(depth_in_m)
@@ -746,11 +395,11 @@ class HybridReceiversBoundaryInternalTest(object):
         self.network = self._network_on_sphere(latitude, longitude,
                                                depth_in_m, radius,
                                                recursion_level,
-                                               save_hdf5, savepath)
+                                               savepath)
 
     def _network_on_sphere(self, latitude, longitude,
                            depth_in_m, radius, recursion_level,
-                           save_hdf5, savepath):
+                           savepath):
         """get list of receivers on a triangulated sphere"""
         x, y, z = \
             rotations.coord_transform_lat_lon_depth_to_xyz(latitude,
@@ -799,30 +448,30 @@ class HybridReceiversBoundaryInternalTest(object):
                 latitude=lat,
                 longitude=lon,
                 depth_in_m=depth))
-            if save_hdf5:
-                tpr[counter, 0] = 90.0 - lat
-                tpr[counter, 1] = lon
-                tpr[counter, 2] = 6371000.0 - depth
-                counter += 1
+            # save hdf5:
+            tpr[counter, 0] = 90.0 - lat
+            tpr[counter, 1] = lon
+            tpr[counter, 2] = 6371000.0 - depth
+            counter += 1
 
         normals, areas = self.sphere_surface_vars(vertices, triangles)
 
-        if save_hdf5:
-            for i in np.arange(len(receivers)):
-                normals[i, :] = rotations.rotate_vector_xyz_earth_to_xyz_src(
-                    normals[i, :], receivers[i].longitude_rad,
-                    receivers[i].colatitude_rad)
-            normals *= -1.0
-            f = h5py.File(savepath, 'w')
-            grp = f.create_group("spherical")
-            dset = grp.create_dataset("coordinates", data=tpr,
-                                      compression="gzip", compression_opts=4)
-            dset = grp.create_dataset("normals", data=normals,
-                                      compression="gzip", compression_opts=4)
-            dset = grp.create_dataset("weights", data=areas,
-                                      compression="gzip", compression_opts=4)
-            grp.attrs['points-number'] = centroids.shape[0]
-            f.close()
+        # save hdf5:
+        for i in np.arange(len(receivers)):
+            normals[i, :] = rotations.rotate_vector_xyz_earth_to_xyz_src(
+                normals[i, :], receivers[i].longitude_rad,
+                receivers[i].colatitude_rad)
+        normals *= -1.0
+        f = h5py.File(savepath, 'w')
+        grp = f.create_group("spherical")
+        dset = grp.create_dataset("coordinates", data=tpr,
+                                  compression="gzip", compression_opts=4)
+        dset = grp.create_dataset("normals", data=normals,
+                                  compression="gzip", compression_opts=4)
+        dset = grp.create_dataset("weights", data=areas,
+                                  compression="gzip", compression_opts=4)
+        grp.attrs['points-number'] = centroids.shape[0]
+        f.close()
 
         receivers = [receivers, normals, areas, centroids]
 
