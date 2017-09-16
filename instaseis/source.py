@@ -1735,13 +1735,6 @@ class HybridSources(object):
                      n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
                              c_33 * e_rr)
 
-                """
-                t2 = 2.0 * n[0] * mu * np.array(strain[:, 4]) \
-                    + 2.0 * n[1] * mu * np.array(strain[:, 3]) \
-                    + n[2] * lbd * np.array(strain[:, 0]) \
-                    + n[2] * lbd * np.array(strain[:, 1]) \
-                    + n[2] * (lbd + 2.0 * mu) * np.array(strain[:, 2])
-                """
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
                                             f_r=0, f_t=w, f_p=0,
@@ -1757,7 +1750,7 @@ class HybridSources(object):
 
         return pointsources
 
-    def _c_ijkl_ani(self, lbd , mu, xi_ani, phi_ani, eta_ani,
+    def _c_ijkl_ani(self, lbd, mu, xi_ani, phi_ani, eta_ani,
                    theta_fa, phi_fa, i, j, k, l):
 
         deltaf = np.zeros([3,3])
@@ -1765,7 +1758,7 @@ class HybridSources(object):
         deltaf[1, 1] = 1
         deltaf[2, 2] = 1
 
-        s = np.zeros(3) #  for transverse anisotropy
+        s = np.zeros(3)  # for transverse anisotropy
         s[0] = cos(phi_fa) * sin(theta_fa)  # 0.0
         s[1] = sin(phi_fa) * sin(theta_fa)  # 0.0
         s[2] = cos(theta_fa)  # 1.0
@@ -1777,7 +1770,6 @@ class HybridSources(object):
 
         c_ijkl_ani += mu * (deltaf[i, k] * deltaf[j, l]
                             + deltaf[i, l] * deltaf[j, k])
-
 
         # anisotropic part in xi, phi, eta
         c_ijkl_ani += ((eta_ani - 1.0) * lbd + 2.0 * eta_ani * mu *
