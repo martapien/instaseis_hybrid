@@ -20,6 +20,7 @@ import numpy as np
 import obspy
 import obspy.core.inventory
 from obspy.signal.filter import lowpass
+from obspy.signal.filter import highpass
 from obspy.signal.util import next_pow_2
 import obspy.io.xseed.parser
 import os
@@ -1571,8 +1572,9 @@ class HybridSources(object):
     :type coordsfile: str
     """
 
-    def __init__(self, fieldsfile=None, coordsfile=None):
-        self.pointsources = self._create_pointsources(fieldsfile, coordsfile)
+    def __init__(self, fieldsfile, coordsfile, filter_freqs=None):
+        self.pointsources = self._create_pointsources(fieldsfile, coordsfile,
+                                                      filter_freqs)
 
     def __len__(self):
         return len(self.pointsources)
@@ -1580,7 +1582,7 @@ class HybridSources(object):
     def __getitem__(self, index):
         return self.pointsources[index]
 
-    def _create_pointsources(self, fieldsfile, coordsfile):
+    def _create_pointsources(self, fieldsfile, coordsfile, filter_freqs=None):
         """generate point sources from local simulation fields"""
 
         f_fields = h5py.File(fieldsfile, "r")
@@ -1666,6 +1668,20 @@ class HybridSources(object):
             d0 = -np.array(displ[:, 0])  # theta
             d1 = -np.array(displ[:, 1])  # phi
             d2 = -np.array(displ[:, 2])  # r
+            # review 1/dt correct?
+            if filter_freqs is not None:
+                d0 = lowpass(d0, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                d0 = highpass(d0, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
+                d1 = lowpass(d1, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                d1 = highpass(d1, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
+                d2 = lowpass(d2, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                d2 = highpass(d2, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
 
             m_tt = (c_11 * n[0] + c_15 * n[2]) * w
             m_pp = (c_12 * n[0] + c_25 * n[2]) * w
@@ -1734,6 +1750,20 @@ class HybridSources(object):
                      n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
                      n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
                              c_33 * e_rr)
+            # review 1/dt correct?
+            if filter_freqs is not None:
+                t0 = lowpass(t0, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                t0 = highpass(t0, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
+                t1 = lowpass(t1, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                t1 = highpass(t1, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
+                t2 = lowpass(t2, filter_freqs[0], 1. / dt,
+                             corners=4, zerophase=True)
+                t2 = highpass(t2, filter_freqs[1], 1. / dt,
+                              corners=4, zerophase=True)
 
             pointsources.append(ForceSource(latitude, longitude,
                                             depth_in_m=depth_in_m,
