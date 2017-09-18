@@ -1588,8 +1588,8 @@ class HybridSources(object):
         f_fields = h5py.File(fieldsfile, "r")
         f_coords = h5py.File(coordsfile, "r")
 
-        fields_npoints = f_fields['spherical'].attrs['points-number']
-        coords_npoints = f_coords['spherical'].attrs['points-number']
+        fields_npoints = f_fields['spherical'].attrs['points_number']
+        coords_npoints = f_coords['spherical'].attrs['points_number']
 
         if coords_npoints != fields_npoints:
             raise ValueError("The number of points in the fieldsfile and in "
@@ -1604,9 +1604,14 @@ class HybridSources(object):
         phi_all = f_coords['elastic_params/phi']
         eta_all = f_coords['elastic_params/eta']
 
-        dt = f_fields['spherical/velocity'].attrs['dt']
-        displ_all = f_fields['spherical/velocity']
+        dt = f_fields['spherical'].attrs['dt']
 
+        # When extracting from hdf5, dt is a float. When extracting from
+        # netcdf, dt is a numpy array of length 1.
+        if type(dt) is np.ndarray:
+            dt = dt[0]
+
+        displ_all = f_fields['spherical/velocity']
         traction_all = None
         strain_all = None
         if 'spherical/traction' in f_fields:
