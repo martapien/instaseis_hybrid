@@ -450,34 +450,73 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             datetime=self.parsed_mesh.creation_time
         )
 
-    def get_data_hybrid(self, source, receiver, dt, dumpfields,
-                        filter_freqs=None):
-        """
-        Extract data for hybrid modelling from a netCDF based Instaseis
-        database. Outputs dumpfields in tpr.
+    def _get_elastic_params(self, source, receivers, outfile):
 
-        :type source: :class:`instaseis.source.Source` or
-            :class:`instaseis.source.ForceSource`
-        :param source: The source.
-        :type receiver: :class:`instaseis.source.Receiver`
-        :param receiver: The receiver.
-        :type dt: dt: float
-        :param dt: Desired sampling rate of the dumped fields. Resampling is 
-            done using a Lanczos kernel.
-        :type dumpfields: tuple of str
-        :param dumpfields: Which fields to dump. Must be a tuple
-            containing any combination of ``"displacement"``, ``"velocity"``, 
-            ``"strain"``, and ``"traction"``.
-        """
+        npoints = len(receivers.network[0])
+        mu = np.zeros(npoints)
+        rho = np.zeros(npoints)
+        lbda = np.zeros(npoints)
+        xi = np.zeros(npoints)
+        phi = np.zeros(npoints)
+        eta = np.zeros(npoints)
 
-        if "strain" in dumpfields or "traction" in dumpfields:
-            components = ("hybrid", "strain")
-        else:
-            components = ("hybrid")
+        i = 0
+        for receiver in receivers.network[0]:
+            if self.info.is_reciprocal:
+                a, b = source, receiver
+            else:
+                a, b = receiver, source
 
-        # the database is never reciprocal
-        if self.info.is_reciprocal:
-            raise NotImplementedError("Need a forward Instaseis database.")
+            rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+                a.x(planet_radius=self.info.planet_radius),
+                a.y(planet_radius=self.info.planet_radius),
+                a.z(planet_radius=self.info.planet_radius),
+                b.longitude, b.colatitude)
+
+            coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+            element_info = self._get_element_info(coordinates=coordinates)
+            params = self._get_params(element_info)
+            mu[i] = params['mu']
+            rho[i] = params['rho']
+            lbda[i] = params['lambda']
+            xi[i] = params['xi']
+            phi[i] = params['phi']
+            eta[i] = params['eta']
+
+            i += 1
+        f = h5py.File(outfile, "a")
+        grp = f.create_group('elastic_params')
+        compression = 4
+        grp.create_dataset('mu', data=mu,
+                           compression="gzip",
+                           compression_opts=compression)
+        grp.create_dataset('rho', data=rho,
+                           compression="gzip",
+                           compression_opts=compression)
+        grp.create_dataset('lambda', data=lbda,
+                           compression="gzip",
+                           compression_opts=compression)
+        grp.create_dataset('xi', data=xi,
+                           compression="gzip",
+                           compression_opts=compression)
+        grp.create_dataset('phi', data=phi,
+                           compression="gzip",
+                           compression_opts=compression)
+        grp.create_dataset('eta', data=eta,
+                           compression="gzip",
+                           compression_opts=compression)
+
+        f.close()
+
+    @abstractmethod
+    def _get_params(self, element_info):
+        raise NotImplementedError
+
+    def _get_data_hybrid(self, source, receiver, dt, dumpfields,
+                                filter_freqs, components):
+
+        if self.info.is_reciprocal:  # no cover: the db is never reciprocal
+            a, b = source, receiver
         else:
             a, b = receiver, source
 
@@ -491,6 +530,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
         element_info = self._get_element_info(coordinates=coordinates)
 
+        # ToDo modify _get_data for the merged fwd db
         data = self._get_data(
             source=source, receiver=receiver, components=components,
             coordinates=coordinates, element_info=element_info)
@@ -498,7 +538,6 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         duration = (self.info.npts - 1) * self.info.dt
         new_npts = int(round(duration / dt, 6)) + 1
 
-        # review pretty ugly here?
         if "displacement" in dumpfields or "velocity" in dumpfields:
             displ = data["displacement"]
             displ_new = [[], [], []]
@@ -544,14 +583,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
                     strain_new[i] = strain_tmp
             if dt != self.info.dt:
                 strain = np.array(strain_new).T
-        # review: we can either correct for the different axisem stfs here,
-        # at extraction, and just differentiate/integrate according to the
-        # general instaseis consensus, so that
-        # displacement/velocity/acceleration always extract the same arrays
-        # regardless of the stf of the forward database, i.e.
-        # if self.info.stf ==  "errorf": (blabla)
-        # OR: we can correct that at the stage of seismogram re-propagation (
-        # currently chosen option)
+
         if "displacement" in dumpfields:
             data["displacement"] = displ
         if "velocity" in dumpfields:
@@ -564,84 +596,3 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             data["strain"] = strain
 
         return data
-
-    def get_elastic_params(self, source, receivers, outfile):
-
-        if self.info.dump_type != 'displ_only':
-            raise NotImplementedError
-
-        npoints = len(receivers.network[0])
-        mu = np.zeros(npoints)
-        rho = np.zeros(npoints)
-        lbda = np.zeros(npoints)
-        xi = np.zeros(npoints)
-        phi = np.zeros(npoints)
-        eta = np.zeros(npoints)
-
-        i = 0
-        for receiver in receivers.network[0]:
-            if self.info.is_reciprocal:
-                a, b = source, receiver
-            else:
-                a, b = receiver, source
-
-            rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
-                a.x(planet_radius=self.info.planet_radius),
-                a.y(planet_radius=self.info.planet_radius),
-                a.z(planet_radius=self.info.planet_radius),
-                b.longitude, b.colatitude)
-
-            coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
-
-            ei = self._get_element_info(coordinates=coordinates)
-            mesh = self.parsed_mesh.f["Mesh"]
-
-            if not self.read_on_demand:
-                mesh_mu = self.parsed_mesh.mesh_mu
-                mesh_rho = self.parsed_mesh.mesh_rho
-                mesh_lambda = self.parsed_mesh.mesh_lambda
-                mesh_xi = self.parsed_mesh.mesh_xi
-                mesh_phi = self.parsed_mesh.mesh_phi
-                mesh_eta = self.parsed_mesh.mesh_eta
-
-            else:
-                mesh_mu = mesh["mesh_mu"]
-                mesh_rho = mesh["mesh_rho"]
-                mesh_lambda = mesh["mesh_lambda"]
-                mesh_xi = mesh["mesh_xi"]
-                mesh_phi = mesh["mesh_phi"]
-                mesh_eta = mesh["mesh_eta"]
-
-            npol = self.info.spatial_order
-            mu[i] = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
-            rho[i] = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
-            lbda[i] = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
-            xi[i] = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
-            phi[i] = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
-            eta[i] = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
-
-            i += 1
-        f = h5py.File(outfile, "a")
-        grp = f.create_group('elastic_params')
-        compression = 4
-        dset = grp.create_dataset('mu', data=mu,
-                                       compression="gzip",
-                                       compression_opts=compression)
-        dset = grp.create_dataset('rho', data=rho,
-                                        compression="gzip",
-                                        compression_opts=compression)
-        dset = grp.create_dataset('lambda', data=lbda,
-                                           compression="gzip",
-                                           compression_opts=compression)
-        dset = grp.create_dataset('xi', data=xi,
-                                       compression="gzip",
-                                       compression_opts=compression)
-        dset = grp.create_dataset('phi', data=phi,
-                                       compression="gzip",
-                                       compression_opts=compression)
-        dset = grp.create_dataset('eta', data=eta,
-                                       compression="gzip",
-                                       compression_opts=compression)
-
-        f.close()
-

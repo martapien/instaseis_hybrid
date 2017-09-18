@@ -26,11 +26,10 @@ import obspy.io.xseed.parser
 import os
 from scipy import interp
 import h5py
-from math import cos, sin
 
 from . import ReceiverParseError, SourceParseError
 from . import rotations
-from .helpers import (elliptic_to_geocentric_latitude, rfftfreq)
+from .helpers import (elliptic_to_geocentric_latitude, rfftfreq, c_ijkl_ani)
 
 DEFAULT_MU = 32e9
 
@@ -1636,44 +1635,46 @@ class HybridSources(object):
             xi = xi_all[i]
             phi = phi_all[i]
             eta = eta_all[i]
+            # review only transverse isotropy in this case
             fa_ani_thetal = 0.0
             fa_ani_phil = 0.0
 
-            c_11 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 0, 0, 0, 0)
-            c_12 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 0, 0, 1, 1)
-            c_13 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 0, 0, 2, 2)
-            c_15 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 0, 0, 2, 0)
-            c_22 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 1, 1, 1, 1)
-            c_23 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 1, 1, 2, 2)
-            c_25 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 1, 1, 2, 0)
-            c_33 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 2, 2, 2, 2)
-            c_35 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 2, 2, 2, 0)
-            c_44 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 1, 2, 1, 2)
-            c_46 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 1, 2, 0, 1)
-            c_55 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 2, 0, 2, 0)
-            c_66 = self._c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                   fa_ani_phil, 0, 1, 0, 1)
+            c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 0, 0)
+            c_12 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 1, 1)
+            c_13 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 2)
+            c_15 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 0)
+            c_22 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 1, 1)
+            c_23 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 2)
+            c_25 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 0)
+            c_33 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 2)
+            c_35 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 0)
+            c_44 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 1, 2)
+            c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 0, 1)
+            c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 0, 2, 0)
+            c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 1, 0, 1)
 
-            # review -- stfs bandlimited for reconvolution to be stable later?
+            # Note that all STFs need to be bandlimited for reconvolution to be
+            # stable later.
 
             # append moment tensor sources
             # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
             d0 = -np.array(displ[:, 0])  # theta
             d1 = -np.array(displ[:, 1])  # phi
             d2 = -np.array(displ[:, 2])  # r
-            # review 1/dt correct?
+
             if filter_freqs is not None:
                 d0 = lowpass(d0, filter_freqs[0], 1. / dt,
                              corners=4, zerophase=True)
@@ -1755,7 +1756,7 @@ class HybridSources(object):
                      n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
                      n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
                              c_33 * e_rr)
-            # review 1/dt correct?
+
             if filter_freqs is not None:
                 t0 = lowpass(t0, filter_freqs[0], 1. / dt,
                              corners=4, zerophase=True)
@@ -1785,43 +1786,6 @@ class HybridSources(object):
 
         return pointsources
 
-    def _c_ijkl_ani(self, lbd, mu, xi_ani, phi_ani, eta_ani,
-                   theta_fa, phi_fa, i, j, k, l):
-
-        deltaf = np.zeros([3,3])
-        deltaf[0, 0] = 1.
-        deltaf[1, 1] = 1
-        deltaf[2, 2] = 1
-
-        s = np.zeros(3)  # for transverse anisotropy
-        s[0] = cos(phi_fa) * sin(theta_fa)  # 0.0
-        s[1] = sin(phi_fa) * sin(theta_fa)  # 0.0
-        s[2] = cos(theta_fa)  # 1.0
-
-        c_ijkl_ani = 0.0
-
-        # isotropic part:
-        c_ijkl_ani += lbd * deltaf[i, j] * deltaf[k, l]
-
-        c_ijkl_ani += mu * (deltaf[i, k] * deltaf[j, l]
-                            + deltaf[i, l] * deltaf[j, k])
-
-        # anisotropic part in xi, phi, eta
-        c_ijkl_ani += ((eta_ani - 1.0) * lbd + 2.0 * eta_ani * mu *
-                       (1.0 - 1.0 / xi_ani)) * (deltaf[i, j] * s[k] * s[l]
-                                                + deltaf[k, l] * s[i] * s[j])
-
-        c_ijkl_ani += mu * (1.0 / xi_ani - 1.0) *\
-                      (deltaf[i, k] * s[j] * s[l]
-                       + deltaf[i, l] * s[j] * s[k]
-                       + deltaf[j, k] * s[i] * s[l]
-                       + deltaf[j, l] * s[i] * s[k])
-
-        c_ijkl_ani += ((1.0 - 2.0 * eta_ani + phi_ani) * (lbd + 2.0 * mu)
-                       + (4. * eta_ani - 4.) * mu / xi_ani)\
-                       * (s[i] * s[j] * s[k] * s[l])
-
-        return c_ijkl_ani
 
     def lp_sliprate(self, freq, corners=4, zerophase=False):
         for ps in self.pointsources:

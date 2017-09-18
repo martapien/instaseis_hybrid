@@ -585,47 +585,46 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             new_npts = int(round(duration / source.dt, 6)) + 1
             new_nfft = int(next_pow_2(new_npts) * 2)
 
-            # review can the stfs be interpolated out of the comp-loop?
+            # Next lines "out of the comp-loop" relative to the other
+            # reconvolutions
+            if source.dt is None or source.sliprate is None:
+                raise ValueError("Source has no source time function.")
+
+            if STF_MAP[self.info.stf] not in [0, 1]:
+                raise NotImplementedError(
+                    'deconvolution not implemented for stf %s'
+                    % (self.info.stf))
+
+            stf_deconv_map = {
+                0: self.info.sliprate,
+                1: self.info.slip}
+
+            new_dt = source.dt
+            if new_dt > self.info.dt:  # we can only upsample the db
+                raise ValueError("dt of the source not compatible")
+
+            stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
+
+            stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                               old_start=0, old_dt=self.info.dt,
+                                               new_start=0, new_dt=new_dt,
+                                               new_npts=new_npts, a=12,
+                                               window="blackman")
+
             for comp in components:
                 # We assume here that the sliprate is well-behaved,
                 # e.g. zeros at the boundaries and no energy above the mesh
                 # resolution.
-                if source.dt is None or source.sliprate is None:
-                    raise ValueError("source has no source time function")
-
-                if STF_MAP[self.info.stf] not in [0, 1]:
-                    raise NotImplementedError(
-                        'deconvolution not implemented for stf %s'
-                        % (self.info.stf))
-
-                stf_deconv_map = {
-                    0: self.info.sliprate,
-                    1: self.info.slip}
-
-                new_dt = source.dt
-
-                stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
-
-                stf_deconv = lanczos_interpolation(data=stf_deconv,
-                                             old_start=0, old_dt=self.info.dt,
-                                             new_start=0, new_dt=new_dt,
-                                             new_npts=new_npts, a=12,
-                                             window="blackman")
-
                 stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
-
-                if new_dt > self.info.dt:  # we can only upsample the db
-                    raise ValueError("dt of the source not compatible")
 
                 stf_conv_f = np.fft.rfft(source.sliprate,
                                          n=new_nfft)
-
                 data_new = lanczos_interpolation(data=data[comp],
                                              old_start=0, old_dt=self.info.dt,
                                              new_start=0, new_dt=new_dt,
                                              new_npts=new_npts, a=12,
                                              window="blackman")
-
+                
                 # Apply a 5 percent, at least 5 samples taper at the end.
                 # The first sample is guaranteed to be zero in any case.
                 tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
@@ -727,6 +726,60 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                "channel": "%sX%s" % (band_code, comp)})
             st += tr
         return st
+
+    def get_elastic_params(self, source, receivers, outfile):
+        if self.info.dump_type != 'displ_only':
+            raise NotImplementedError
+        self._get_elastic_params(source, receivers, outfile)
+
+    def get_data_hybrid(self, source, receiver, dt, dumpfields,
+                        filter_freqs=None):
+        """
+        Extract data for hybrid modelling from a netCDF based Instaseis
+        database. Outputs dumpfields in tpr.
+
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :param receiver: The receiver.
+        :type dt: dt: float
+        :param dt: Desired sampling rate of the dumped fields. Resampling is 
+            done using a Lanczos kernel.
+        :type dumpfields: tuple of str
+        :param dumpfields: Which fields to dump. Must be a tuple
+            containing any combination of ``"displacement"``, ``"velocity"``, 
+            ``"strain"``, and ``"traction"``.
+        """
+
+        if self.info.is_reciprocal:
+            raise NotImplementedError("Need a forward Instaseis database for "
+                                      "hybrid data extraction.")
+
+        if "strain" in dumpfields or "traction" in dumpfields:
+            components = ("hybrid", "strain")
+        else:
+            components = ("hybrid")
+
+        # review: we can either correct for the different axisem stfs here,
+        # at extraction, and just differentiate/integrate according to the
+        # general instaseis consensus, so that
+        # displacement/velocity/acceleration always extract the same arrays
+        # regardless of the stf of the forward database, i.e.
+        # if self.info.stf ==  "errorf": (blabla) ??
+        data = self._get_data_hybrid(source, receiver, dt, dumpfields,
+                                     filter_freqs, components)
+
+        return data
+
+    @abstractmethod
+    def _get_data_hybrid(self, source, receiver, dt, dumpfields,
+                         filter_freqs, components):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _get_elastic_params(self, source, receivers, outfile):
+        raise NotImplementedError
 
     def _get_greens_seiscomp_sanity_checks(self, epicentral_distance_degree,
                                            source_depth_in_m, kind, dt):

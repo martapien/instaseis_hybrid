@@ -203,4 +203,142 @@ class ForwardMergedInstaseisDB(BaseNetCDFInstaseisDB):
             if "Z" in components:
                 data["Z"] = final[:, 2]
 
+        # ToDo forward merged - get strain
+        """
+        if "hybrid" in components:
+            if not isinstance(source, Source):
+                raise NotImplementedError
+            if self.info.dump_type != 'displ_only':
+                raise NotImplementedError
+
+            if "strain" in components:
+                if ei.axis:
+                    G = self.parsed_mesh.G2
+                    GT = self.parsed_mesh.G1T
+                else:
+                    G = self.parsed_mesh.G2
+                    GT = self.parsed_mesh.G2T
+
+                # collect strain in final_strain array
+                # final_strain is in Voigt notation [ss, pp, zz, sp, sz, zp]
+                strain_1 = self._get_strain_interp(self.meshes.m1, ei.id_elem,
+                        ei.gll_point_ids, G, GT, ei.col_points_xi,
+                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
+                        ei.xi, ei.eta)
+                strain_2 = self._get_strain_interp(self.meshes.m2, ei.id_elem,
+                        ei.gll_point_ids, G, GT, ei.col_points_xi,
+                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
+                        ei.xi, ei.eta)
+                strain_3 = self._get_strain_interp(self.meshes.m3, ei.id_elem,
+                        ei.gll_point_ids, G, GT, ei.col_points_xi,
+                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
+                        ei.xi, ei.eta)
+                strain_4 = self._get_strain_interp(self.meshes.m4, ei.id_elem,
+                        ei.gll_point_ids, G, GT, ei.col_points_xi,
+                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
+                        ei.xi, ei.eta)
+
+                final_strain = np.zeros((strain_1.shape[0], 6), dtype="float64")
+
+                # monopole
+                final_strain[:, 0] += strain_1[:, 0] * mij[0]
+                final_strain[:, 1] += strain_1[:, 1] * mij[0]
+                final_strain[:, 2] += strain_1[:, 2] * mij[0]
+                final_strain[:, 4] += strain_1[:, 4] * mij[0]
+
+                # monopole
+                final_strain[:, 0] += strain_2[:, 0] * (mij[1] + mij[2])
+                final_strain[:, 1] += strain_2[:, 1] * (mij[1] + mij[2])
+                final_strain[:, 2] += strain_2[:, 2] * (mij[1] + mij[2])
+                final_strain[:, 4] += strain_2[:, 4] * (mij[1] + mij[2])
+
+                # dipoles
+                fac_1 = mij[3] * np.cos(coordinates.phi) \
+                    + mij[4] * np.sin(coordinates.phi)
+
+                fac_2 = -mij[3] * np.sin(coordinates.phi) \
+                    + mij[4] * np.cos(coordinates.phi)
+
+                final_strain[:, 0] += strain_3[:, 0] * fac_1
+                final_strain[:, 1] += strain_3[:, 1] * fac_1
+                final_strain[:, 2] += strain_3[:, 2] * fac_1
+                final_strain[:, 3] += strain_3[:, 3] * fac_2
+                final_strain[:, 4] += strain_3[:, 4] * fac_1
+                final_strain[:, 5] += strain_3[:, 5] * fac_2
+
+                # quadrupoles
+                fac_1 = (mij[1] - mij[2]) * np.cos(2 * coordinates.phi) \
+                    + 2 * mij[5] * np.sin(2 * coordinates.phi)
+
+                fac_2 = -(mij[1] - mij[2]) * np.sin(2 * coordinates.phi) \
+                    + 2 * mij[5] * np.cos(2 * coordinates.phi)
+
+                final_strain[:, 0] += strain_4[:, 0] * fac_1
+                final_strain[:, 1] += strain_4[:, 1] * fac_1
+                final_strain[:, 2] += strain_4[:, 2] * fac_1
+                final_strain[:, 3] += strain_4[:, 3] * fac_2
+                final_strain[:, 4] += strain_4[:, 4] * fac_1
+                final_strain[:, 5] += strain_4[:, 5] * fac_2
+
+                # rotate final_strain to tpr
+                for i in range(len(final_strain)):
+                    final_strain[i, :] = rotations.\
+                        rotate_symm_tensor_voigt_src_to_xyz(
+                        final_strain[i, :], coordinates.phi)
+                    final_strain[i, :] = rotations.\
+                        rotate_symm_tensor_voigt_xyz_src_to_xyz_earth(
+                        final_strain[i, :], source.longitude_rad,
+                        source.colatitude_rad)
+                    final_strain[i, :] = rotations.\
+                        rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
+                        final_strain[i, :], receiver.longitude_rad,
+                        receiver.colatitude_rad)
+                data["strain"] = final_strain
+
+            # rotate final_displ to tpr
+            final_disp = rotations.rotate_vector_src_to_tpr(
+                final.T, coordinates.phi, source.longitude_rad,
+                source.colatitude_rad, receiver.longitude_rad,
+                receiver.colatitude_rad).T
+
+            dt = self.info.dt
+
+            data["displacement"] = final_disp
+            data["dt"] = dt
+        """
         return data
+
+    def _get_params(self, element_info):
+
+        ei = element_info
+
+        mesh = self.parsed_mesh.f["Mesh"]
+
+        if not self.read_on_demand:
+            mesh_mu = self.parsed_mesh.mesh_mu
+            mesh_rho = self.parsed_mesh.mesh_rho
+            mesh_lambda = self.parsed_mesh.mesh_lambda
+            mesh_xi = self.parsed_mesh.mesh_xi
+            mesh_phi = self.parsed_mesh.mesh_phi
+            mesh_eta = self.parsed_mesh.mesh_eta
+
+        else:
+            mesh_mu = mesh["mesh_mu"]
+            mesh_rho = mesh["mesh_rho"]
+            mesh_lambda = mesh["mesh_lambda"]
+            mesh_xi = mesh["mesh_xi"]
+            mesh_phi = mesh["mesh_phi"]
+            mesh_eta = mesh["mesh_eta"]
+
+        npol = self.info.spatial_order
+        mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+        rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+        lbda = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+        xi = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
+        phi = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
+        eta = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
+
+        params = {'mu': mu, 'rho': rho, 'lambda': lbda, 'xi': xi, 'phi': phi,
+                  'eta': eta}
+
+        return params

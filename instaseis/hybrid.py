@@ -15,10 +15,10 @@ from __future__ import (absolute_import, division, print_function,
 import numpy as np
 import h5py
 import netCDF4
-from math import cos, sin
 
 from . import rotations
 from .source import Receiver
+from .helpers import c_ijkl_ani
 
 
 def hybrid_generate_output(outputfile, inputfile, source, database, dt,
@@ -219,35 +219,36 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt,
             xi = xi_all[i]
             phi = phi_all[i]
             eta = eta_all[i]
+            # review only transverse isotropy in this case
             fa_ani_thetal = 0.0
             fa_ani_phil = 0.0
 
-            c_11 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 0, 0, 0, 0)
-            c_12 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 0, 0, 1, 1)
-            c_13 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 0, 0, 2, 2)
-            c_15 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 0, 0, 2, 0)
-            c_22 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 1, 1, 1, 1)
-            c_23 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 1, 1, 2, 2)
-            c_25 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 1, 1, 2, 0)
-            c_33 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 2, 2, 2, 2)
-            c_35 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 2, 2, 2, 0)
-            c_44 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 1, 2, 1, 2)
-            c_46 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 1, 2, 0, 1)
-            c_55 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 2, 0, 2, 0)
-            c_66 = _c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                                    fa_ani_phil, 0, 1, 0, 1)
+            c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 0, 0)
+            c_12 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 1, 1)
+            c_13 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 2)
+            c_15 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 0)
+            c_22 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 1, 1)
+            c_23 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 2)
+            c_25 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 0)
+            c_33 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 2)
+            c_35 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 0)
+            c_44 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 1, 2)
+            c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 0, 1)
+            c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 0, 2, 0)
+            c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 1, 0, 1)
 
             traction[:, 0] = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt +
                                      c_12 * e_pp + c_13 * e_rr) + \
@@ -287,19 +288,21 @@ def _make_receivers_from_spherical(inputfile):
             rad, lat, lon = line.split()
             lat = float(lat)
             lon = float(lon)
-            depth = (6371.0 - float(rad)) * 1000
+            depth = (6371.0 - float(rad)) * 1000.0
             receivers.append(Receiver(
                 latitude=lat,
                 longitude=lon,
                 depth_in_m=depth))
         f.close()
 
-    elif inputfile.endswith('.hdf5'):
+    elif inputfile.endswith('.hdf5') or inputfile.endswith('.nc'):
         f = h5py.File(inputfile, 'r')
         if "spherical/coordinates" not in f:
             raise ValueError('spherical/coordinates not found in file')
         coords = f['spherical/coordinates'][:, :]  # review tpr
         items = f['spherical'].attrs['points_number']
+        if type(items) is np.ndarray:
+            items = items[0]
 
         for i in np.arange(items):
             lat = 90.0 - coords[i, 0]
@@ -311,7 +314,7 @@ def _make_receivers_from_spherical(inputfile):
                 depth_in_m=dep))
         f.close()
     else:
-        raise NotImplementedError('Provide input as .txt or .hdf5 file')
+        raise NotImplementedError('Provide input as txt, hdf5 or netcdf file.')
 
     return receivers
 
@@ -334,9 +337,11 @@ def _make_receivers_from_local(inputfile):
         raise ValueError('local/coordinates not found in file')
 
     coords = f['local/coordinates'][:, :]
-    # review does this store attribute or just point to it? TO TEST
     rotmat = f['local'].attrs['rotation_matrix']
     items = f['local'].attrs['points_number']
+
+    if type(items) is np.ndarray:
+        items = items[0]
 
     # review rotate local into global spherical tpr
     coords = np.dot(coords, rotmat)
@@ -398,46 +403,6 @@ def _get_ntimesteps(database, source, receiver, dt, filter_freqs):
     disp = data["displacement"][:, 0]
 
     return len(disp)
-
-
-# review rethink structure as this function is defined in source.py (HybridS.)
-def _c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
-                i, j, k, l):
-
-    deltaf = np.zeros([3,3])
-    deltaf[0, 0] = 1.
-    deltaf[1, 1] = 1
-    deltaf[2, 2] = 1
-
-    s = np.zeros(3)  # for transverse anisotropy
-    s[0] = cos(phi_fa) * sin(theta_fa)  # 0.0
-    s[1] = sin(phi_fa) * sin(theta_fa)  # 0.0
-    s[2] = cos(theta_fa)  # 1.0
-
-    c_ijkl_ani = 0.0
-
-    # isotropic part:
-    c_ijkl_ani += lbd * deltaf[i, j] * deltaf[k, l]
-
-    c_ijkl_ani += mu * (deltaf[i, k] * deltaf[j, l]
-                        + deltaf[i, l] * deltaf[j, k])
-
-    # anisotropic part in xi, phi, eta
-    c_ijkl_ani += ((eta_ani - 1.0) * lbd + 2.0 * eta_ani * mu *
-                   (1.0 - 1.0 / xi_ani)) * (deltaf[i, j] * s[k] * s[l]
-                                            + deltaf[k, l] * s[i] * s[j])
-
-    c_ijkl_ani += mu * (1.0 / xi_ani - 1.0) *\
-                  (deltaf[i, k] * s[j] * s[l]
-                   + deltaf[i, l] * s[j] * s[k]
-                   + deltaf[j, k] * s[i] * s[l]
-                   + deltaf[j, l] * s[i] * s[k])
-
-    c_ijkl_ani += ((1.0 - 2.0 * eta_ani + phi_ani) * (lbd + 2.0 * mu)
-                   + (4. * eta_ani - 4.) * mu / xi_ani)\
-                   * (s[i] * s[j] * s[k] * s[l])
-
-    return c_ijkl_ani
 
 
 class HybridReceiversBoundaryInternalTest(object):
@@ -549,7 +514,7 @@ class HybridReceiversBoundaryInternalTest(object):
                  vertex_array[index_array[i, 1]],
                  vertex_array[index_array[i, 2]]])
             centroid[i, :] = np.dot(np.transpose(triangle),
-                                    1. / 3. * np.ones(3))
+                                    1 / 3. * np.ones(3))
 
         return vertex_array, index_array, centroid
 

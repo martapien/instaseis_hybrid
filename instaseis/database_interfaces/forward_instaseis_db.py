@@ -173,41 +173,6 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
             if self.info.dump_type != 'displ_only':
                 raise NotImplementedError
 
-            # review do we want that here? Get elastic parameters.
-            elastic_params = {}
-            if not self.read_on_demand:
-                mesh_mu = self.parsed_mesh.mesh_mu
-                mesh_rho = self.parsed_mesh.mesh_rho
-                mesh_lambda = self.parsed_mesh.mesh_lambda
-                #mesh_xi_ani = self.parsed_mesh.mesh_xi_ani
-                #mesh_phi_ani = self.parsed_mesh.mesh_phi_ani
-                #mesh_eta_ani = self.self.parsed_mesh.mesh_eta_ani
-            else:
-                mesh_mu = mesh["mesh_mu"]
-                mesh_rho = mesh["mesh_rho"]
-                mesh_lambda = mesh["mesh_lambda"]
-                #mesh_xi_ani = mesh["mesh_xi_ani"]
-                #mesh_phi_ani = mesh["mesh_phi_ani"]
-                #mesh_eta_ani = mesh["mesh_eta_ani"]
-
-
-            npol = self.info.spatial_order
-            mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
-            rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
-            lambd = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
-#            xi_ani = mesh_xi_ani[ei.gll_point_ids[npol // 2, npol // 2]]
-#            phi_ani = mesh_phi_ani[ei.gll_point_ids[npol // 2, npol // 2]]
-#            eta_ani = mesh_eta_ani[ei.gll_point_ids[npol // 2, npol // 2]]
-
-            elastic_params["mu"] = mu
-            elastic_params["rho"] = rho
-            elastic_params["lambda"] = lambd
-#            elastic_params["xi_ani"] = xi_ani
-#            elastic_params["phi_ani"] = phi_ani
-#            elastic_params["eta_ani"] = eta_ani
-#            elastic_params["fa_ani_theta"] = fa_ani_theta
-#            elastic_params["fa_ani_phi"] = fa_ani_phi
-
             if "strain" in components:
                 if ei.axis:
                     G = self.parsed_mesh.G2
@@ -302,6 +267,41 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
 
             data["displacement"] = final_disp
             data["dt"] = dt
-            data["elastic_params"] = elastic_params
 
         return data
+
+    def _get_params(self, element_info):
+
+        ei = element_info
+
+        mesh = self.parsed_mesh.f["Mesh"]
+
+        if not self.read_on_demand:
+            mesh_mu = self.parsed_mesh.mesh_mu
+            mesh_rho = self.parsed_mesh.mesh_rho
+            mesh_lambda = self.parsed_mesh.mesh_lambda
+            mesh_xi = self.parsed_mesh.mesh_xi
+            mesh_phi = self.parsed_mesh.mesh_phi
+            mesh_eta = self.parsed_mesh.mesh_eta
+
+        else:
+            mesh_mu = mesh["mesh_mu"]
+            mesh_rho = mesh["mesh_rho"]
+            mesh_lambda = mesh["mesh_lambda"]
+            mesh_xi = mesh["mesh_xi"]
+            mesh_phi = mesh["mesh_phi"]
+            mesh_eta = mesh["mesh_eta"]
+
+        npol = self.info.spatial_order
+        mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+        rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+        lbda = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+        xi = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
+        phi = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
+        eta = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
+
+        params = {'mu': mu, 'rho': rho, 'lambda': lbda, 'xi': xi, 'phi': phi,
+                  'eta': eta}
+
+        return params
+

@@ -174,3 +174,42 @@ def rfftfreq(n, d=1.0):  # pragma: no cover
     N = n // 2 + 1
     results = np.arange(0, N, dtype=int)
     return results * val
+
+
+def c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
+                i, j, k, l):
+
+    deltaf = np.zeros([3,3])
+    deltaf[0, 0] = 1.
+    deltaf[1, 1] = 1
+    deltaf[2, 2] = 1
+
+    s = np.zeros(3)  # for transverse anisotropy
+    s[0] = math.cos(phi_fa) * math.sin(theta_fa)  # 0.0
+    s[1] = math.sin(phi_fa) * math.sin(theta_fa)  # 0.0
+    s[2] = math.cos(theta_fa)  # 1.0
+
+    c_ijkl_ani = 0.0
+
+    # isotropic part:
+    c_ijkl_ani += lbd * deltaf[i, j] * deltaf[k, l]
+
+    c_ijkl_ani += mu * (deltaf[i, k] * deltaf[j, l]
+                        + deltaf[i, l] * deltaf[j, k])
+
+    # anisotropic part in xi, phi, eta
+    c_ijkl_ani += ((eta_ani - 1.0) * lbd + 2.0 * eta_ani * mu *
+                   (1.0 - 1.0 / xi_ani)) * (deltaf[i, j] * s[k] * s[l]
+                                            + deltaf[k, l] * s[i] * s[j])
+
+    c_ijkl_ani += mu * (1.0 / xi_ani - 1.0) *\
+                  (deltaf[i, k] * s[j] * s[l]
+                   + deltaf[i, l] * s[j] * s[k]
+                   + deltaf[j, k] * s[i] * s[l]
+                   + deltaf[j, l] * s[i] * s[k])
+
+    c_ijkl_ani += ((1.0 - 2.0 * eta_ani + phi_ani) * (lbd + 2.0 * mu)
+                   + (4. * eta_ani - 4.) * mu / xi_ani)\
+                   * (s[i] * s[j] * s[k] * s[l])
+
+    return c_ijkl_ani
