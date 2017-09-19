@@ -656,20 +656,22 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                         data_summed_force[comp] = data[comp]
 
         if dt is not None:
+            if dt > new_dt:
+                raise ValueError("We can only upsample the result.")
             for comp in components:
                 # We don't need to align a sample to the peak of the source
                 # time function here.
                 new_npts = int(round((len(data_summed_force[comp]) - 1) *
-                                     self.info.dt / dt, 6) + 1)
+                                     new_dt / dt, 6) + 1)
                 data_summed_moment[comp] = lanczos_interpolation(
                     data=np.require(data_summed_moment[comp],
                                     requirements=["C"]),
-                    old_start=0, old_dt=self.info.dt, new_start=0, new_dt=dt,
+                    old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
                     new_npts=new_npts, a=kernelwidth, window="blackman")
                 data_summed_force[comp] = lanczos_interpolation(
                     data=np.require(data_summed_force[comp],
                                     requirements=["C"]),
-                    old_start=0, old_dt=self.info.dt, new_start=0, new_dt=dt,
+                    old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
                     new_npts=new_npts, a=kernelwidth, window="blackman")
                 # The resampling assumes zeros outside the data range. This
                 # does not introduce any errors at the beginning as the data is
@@ -679,8 +681,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 #
                 # Also don't cut it for the "identify" interpolation which is
                 # important for testing.
-                if round(dt / self.info.dt, 6) != 1.0:
-                    affected_area = kernelwidth * self.info.dt
+                if round(dt / new_dt, 6) != 1.0:
+                    affected_area = kernelwidth * new_dt
                     data_summed_moment[comp] = \
                         data_summed_moment[comp][
                         :-int(np.ceil(affected_area / dt))]

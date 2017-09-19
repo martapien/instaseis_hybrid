@@ -1679,7 +1679,7 @@ class HybridSources(object):
             if filter_freqs is not None:
                 d0 = bandpass(d0, freqmin=filter_freqs[0],
                               freqmax=filter_freqs[1], df=1. / dt,
-                              corners=4, zerophase=True)
+                              corners=4, zerophase=True)  # review zerophase?
                 d1 = bandpass(d1, freqmin=filter_freqs[0],
                               freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
