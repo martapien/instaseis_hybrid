@@ -255,7 +255,14 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                         rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
                         final_strain[i, :], receiver.longitude_rad,
                         receiver.colatitude_rad)
-                data["strain"] = final_strain
+                strain = {}
+                strain['t'] = final_strain[:, 0]
+                strain['p'] = final_strain[:, 1]
+                strain['r'] = final_strain[:, 2]
+                strain['rp'] = final_strain[:, 3]
+                strain['rt'] = final_strain[:, 4]
+                strain['tp'] = final_strain[:, 5]
+                data["strain"] = strain
 
             # rotate final_displ to tpr
             final_disp = rotations.rotate_vector_src_to_tpr(
@@ -263,9 +270,13 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 source.colatitude_rad, receiver.longitude_rad,
                 receiver.colatitude_rad).T
 
-            dt = self.info.dt
+            displacement = {}
+            displacement['t'] = final_disp[:, 0]
+            displacement['p'] = final_disp[:, 1]
+            displacement['r'] = final_disp[:, 2]
+            data["displacement"] = displacement
 
-            data["displacement"] = final_disp
+            dt = self.info.dt
             data["dt"] = dt
 
         return data

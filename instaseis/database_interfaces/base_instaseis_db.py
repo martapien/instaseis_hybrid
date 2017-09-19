@@ -24,6 +24,7 @@ import numpy as np
 from obspy.core import AttribDict, Stream, Trace, UTCDateTime
 from obspy.geodetics import locations2degrees
 from obspy.signal.interpolation import lanczos_interpolation
+from obspy.signal.filter import bandpass
 from obspy.signal.util import next_pow_2
 from scipy.integrate import cumtrapz
 import scipy.signal
@@ -624,7 +625,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                              new_start=0, new_dt=new_dt,
                                              new_npts=new_npts, a=12,
                                              window="blackman")
-                
+
                 # Apply a 5 percent, at least 5 samples taper at the end.
                 # The first sample is guaranteed to be zero in any case.
                 tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
@@ -732,8 +733,10 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             raise NotImplementedError
         self._get_elastic_params(source, receivers, outfile)
 
-    def get_data_hybrid(self, source, receiver, dt, dumpfields,
-                        filter_freqs=None):
+    def get_data_hybrid(self, source, receiver, dumpfields,
+                        remove_source_shift=True,
+                        reconvolve_stf=False, dt=None, filter_freqs=None,
+                        kernelwidth=12):
         """
         Extract data for hybrid modelling from a netCDF based Instaseis
         database. Outputs dumpfields in tpr.
@@ -769,6 +772,185 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         # if self.info.stf ==  "errorf": (blabla) ??
         data = self._get_data_hybrid(source, receiver, dt, dumpfields,
                                      filter_freqs, components)
+        # data comes out in tpr
+
+        if reconvolve_stf and remove_source_shift:
+            raise ValueError("'remove_source_shift' argument not "
+                             "compatible with 'reconvolve_stf'.")
+
+        # Calculate the final time information about the seismograms.
+        time_information = _get_seismogram_times(
+            info=self.info, origin_time=source.origin_time, dt=dt,
+            kernelwidth=kernelwidth, remove_source_shift=remove_source_shift,
+            reconvolve_stf=reconvolve_stf)
+
+        stf_deconv_map = {
+            0: self.info.sliprate,
+            1: self.info.slip}
+
+        if "displacement" in dumpfields or "velocity" in dumpfields:
+            displ = data["displacement"]
+            vel = {}
+            for comp in displ.keys():
+                # 1. reconvolve stf
+                if reconvolve_stf:
+
+                    if source.dt is None or source.sliprate is None:
+                        raise ValueError("source has no source time function")
+                    if STF_MAP[self.info.stf] not in [0, 1]:
+                        raise NotImplementedError(
+                            'deconvolution not implemented for stf %s'
+                            % (self.info.stf))
+                    if abs((source.dt - self.info.dt) / self.info.dt) > 1e-7:
+                        raise ValueError("dt of the source not compatible")
+
+                    stf_deconv_f = np.fft.rfft(
+                        stf_deconv_map[STF_MAP[self.info.stf]],
+                        n=self.info.nfft)
+                    stf_conv_f = np.fft.rfft(source.sliprate,
+                                             n=self.info.nfft)
+                    if source.time_shift is not None:
+                        stf_conv_f *= \
+                            np.exp(- 1j * rfftfreq(self.info.nfft) *
+                                   2. * np.pi * source.time_shift / self.info.dt)
+
+                    # Apply a 5 percent, at least 5 samples taper at the end.
+                    # The first sample is guaranteed to be zero in any case.
+                    tlen = max(int(math.ceil(0.05 * len(displ[comp]))), 5)
+                    taper = np.ones_like(displ[comp])
+                    taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
+                    dataf = np.fft.rfft(taper * displ[comp], n=self.info.nfft)
+
+                    # Ensure numerical stability by not dividing with zero.
+                    f = stf_conv_f
+                    _l = np.abs(stf_deconv_f)
+                    _idx = np.where(_l > 0.0)
+                    f[_idx] /= stf_deconv_f[_idx]
+                    f[_l == 0] = 0 + 0j
+                    displ[comp] = np.fft.irfft(dataf * f)[:self.info.npts]
+
+                # 2. interpolate
+                if dt is not None:
+                    displ[comp] = np.concatenate(
+                        [np.zeros(20), displ[comp], np.zeros(20)])
+                    displ[comp] = lanczos_interpolation(
+                        data=np.require(displ[comp],  requirements=["C"]),
+                        old_start=-20 * self.info.dt,
+                        old_dt=self.info.dt,
+                        new_start=time_information["time_shift_at_beginning"],
+                        new_dt=dt,
+                        new_npts=time_information["npts_before_shift_removal"],
+                        a=kernelwidth,
+                        window="blackman")
+                    displ[comp][0] = 0.0
+
+                # 3. remove src shift
+                if remove_source_shift:
+                    displ[comp] = displ[comp][time_information["ref_sample"]:]
+
+                # 4. grad for velocity
+                if "velocity" in dumpfields:
+                    if dt is not None:
+                        vel[comp] = np.gradient(displ[comp], dt)
+                    else:
+                        vel[comp] = np.gradient(displ[comp], self.info.dt)
+
+                # 5. filter out
+                if filter_freqs is not None:
+                    displ[comp] = bandpass(displ[comp],
+                                           freqmin=filter_freqs[0],  # highpass
+                                           freqmax=filter_freqs[1],  # lowpass
+                                           df=1. / self.info.dt,
+                                           corners=4, zerophase=True)
+
+        if "strain" in dumpfields or "traction" in dumpfields:
+            strain = data["strain"]
+            for comp in strain.keys():
+                # 1. reconvolve stf
+                if reconvolve_stf:
+
+                    if source.dt is None or source.sliprate is None:
+                        raise ValueError("source has no source time function")
+                    if STF_MAP[self.info.stf] not in [0, 1]:
+                        raise NotImplementedError(
+                            'deconvolution not implemented for stf %s'
+                            % (self.info.stf))
+                    if abs((source.dt - self.info.dt) / self.info.dt) > 1e-7:
+                        raise ValueError("dt of the source not compatible")
+
+                    stf_deconv_f = np.fft.rfft(
+                        stf_deconv_map[STF_MAP[self.info.stf]],
+                        n=self.info.nfft)
+                    stf_conv_f = np.fft.rfft(source.sliprate,
+                                             n=self.info.nfft)
+                    if source.time_shift is not None:
+                        stf_conv_f *= \
+                            np.exp(- 1j * rfftfreq(self.info.nfft) *
+                                   2. * np.pi * source.time_shift / self.info.dt)
+
+                    # Apply a 5 percent, at least 5 samples taper at the end.
+                    # The first sample is guaranteed to be zero in any case.
+                    tlen = max(int(math.ceil(0.05 * len(strain[comp]))), 5)
+                    taper = np.ones_like(strain[comp])
+                    taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
+                    dataf = np.fft.rfft(taper * strain[comp], n=self.info.nfft)
+
+                    # Ensure numerical stability by not dividing with zero.
+                    f = stf_conv_f
+                    _l = np.abs(stf_deconv_f)
+                    _idx = np.where(_l > 0.0)
+                    f[_idx] /= stf_deconv_f[_idx]
+                    f[_l == 0] = 0 + 0j
+                    strain[comp] = np.fft.irfft(dataf * f)[:self.info.npts]
+
+                # 2. interpolate
+                if dt is not None:
+                    strain[comp] = np.concatenate(
+                        [np.zeros(20), strain[comp], np.zeros(20)])
+                    strain[comp] = lanczos_interpolation(
+                        data=np.require(strain[comp], requirements=["C"]),
+                        old_start=-20 * self.info.dt,
+                        old_dt=self.info.dt,
+                        new_start=time_information["time_shift_at_beginning"],
+                        new_dt=dt,
+                        new_npts=time_information["npts_before_shift_removal"],
+                        a=kernelwidth,
+                        window="blackman")
+                    strain[comp][0] = 0.0
+
+                # 3. remove src shift
+                if remove_source_shift:
+                    strain[comp] = strain[comp][time_information["ref_sample"]:]
+
+                # 4. filter out
+                if filter_freqs is not None:
+                    strain[comp] = bandpass(strain[comp],
+                                            freqmin=filter_freqs[0],  # highpass
+                                            freqmax=filter_freqs[1],  # lowpass
+                                            df=1. / self.info.dt,
+                                            corners=4, zerophase=True)
+
+        if "displacement" in dumpfields:
+            displ_array = np.zeros((len(displ['t']), 3))
+            displ_array[:, 0] = displ['t']
+            displ_array[:, 1] = displ['p']
+            displ_array[:, 2] = displ['r']
+            data["displacement"] = displ_array
+        if "velocity" in dumpfields:
+            vel_array = np.zeros((len(vel['t']), 3))
+            vel_array[:, 0] = vel['t']
+            vel_array[:, 1] = vel['p']
+            vel_array[:, 2] = vel['r']
+            data["velocity"] = vel_array
+        if "strain" in dumpfields or "traction" in dumpfields:
+            strain_array = np.zeros((len(strain['t']), 6))
+            strain_array[:, 0] = strain['t']
+            strain_array[:, 1] = strain['p']
+            strain_array[:, 2] = strain['r']
+            strain_array[:, 3] = strain['rp']
+            strain_array[:, 4] = strain['rt']
+            strain_array[:, 5] = strain['tp']
+            data["strain"] = strain_array
 
         return data
 

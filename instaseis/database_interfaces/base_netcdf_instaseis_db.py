@@ -21,9 +21,6 @@ import collections
 
 import numpy as np
 from obspy.signal.util import next_pow_2
-from obspy.signal.interpolation import lanczos_interpolation
-from obspy.signal.filter import lowpass
-from obspy.signal.filter import highpass
 import os
 import h5py
 
@@ -534,65 +531,5 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         data = self._get_data(
             source=source, receiver=receiver, components=components,
             coordinates=coordinates, element_info=element_info)
-
-        duration = (self.info.npts - 1) * self.info.dt
-        new_npts = int(round(duration / dt, 6)) + 1
-
-        if "displacement" in dumpfields or "velocity" in dumpfields:
-            displ = data["displacement"]
-            displ_new = [[], [], []]
-            for i in np.arange(displ.shape[1]):
-                if filter_freqs is not None:
-                    displ[:, i] = lowpass(
-                        displ[:, i], filter_freqs[0], 1. / self.info.dt,
-                        corners=4, zerophase=True)
-                    displ[:, i] = highpass(
-                        displ[:, i], filter_freqs[1], 1. / self.info.dt,
-                        corners=4, zerophase=True)
-                if dt != self.info.dt:
-                    displ_tmp = np.concatenate(
-                        [np.zeros(20), displ[:, i], np.zeros(20)])
-                    displ_tmp = lanczos_interpolation(
-                        data=displ_tmp, old_start=-20 * self.info.dt,
-                        old_dt=self.info.dt, new_start=0, new_dt=dt,
-                        new_npts=new_npts, a=12, window="blackman")
-                    displ_tmp[0] = 0.0
-                    displ_new[i] = displ_tmp
-            if dt != self.info.dt:
-                displ = np.array(displ_new).T
-
-        if "strain" in dumpfields or "traction" in dumpfields:
-            strain = data["strain"]
-            strain_new = [[], [], [], [], [], []]
-            for i in np.arange(strain.shape[1]):
-                if filter_freqs is not None:
-                    strain[:, i] = lowpass(
-                        strain[:, i], filter_freqs[0], 1. / self.info.dt,
-                        corners=4, zerophase=True)
-                    strain[:, i] = highpass(
-                        strain[:, i], filter_freqs[1], 1. / self.info.dt,
-                        corners=4, zerophase=True)
-                if dt != self.info.dt:
-                    strain_tmp = np.concatenate(
-                        [np.zeros(20), strain[:, i], np.zeros(20)])
-                    strain_tmp = lanczos_interpolation(
-                        data=strain_tmp, old_start=-20 * self.info.dt,
-                        old_dt=self.info.dt, new_start=0, new_dt=dt,
-                        new_npts=new_npts, a=12, window="blackman")
-                    strain_tmp[0] = 0.0
-                    strain_new[i] = strain_tmp
-            if dt != self.info.dt:
-                strain = np.array(strain_new).T
-
-        if "displacement" in dumpfields:
-            data["displacement"] = displ
-        if "velocity" in dumpfields:
-            velocity = [[], [], []]
-            velocity[0] = np.gradient(displ[:, 0], dt)
-            velocity[1] = np.gradient(displ[:, 1], dt)
-            velocity[2] = np.gradient(displ[:, 2], dt)
-            data["velocity"] = np.array(velocity).T
-        if "strain" in dumpfields or "traction" in dumpfields:
-            data["strain"] = strain
 
         return data

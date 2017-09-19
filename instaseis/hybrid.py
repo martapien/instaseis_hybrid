@@ -21,7 +21,9 @@ from .source import Receiver
 from .helpers import c_ijkl_ani
 
 
-def hybrid_generate_output(outputfile, inputfile, source, database, dt,
+def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
+                           remove_source_shift=True,
+                           reconvolve_stf=False,
                            filter_freqs=None,
                            dumpfields=("velocity", "strain"),
                            chunking="points", compression=5,
@@ -111,7 +113,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt,
 
     npoints = len(receivers)
     ntimesteps = _get_ntimesteps(database, source, receivers[0], dt,
-                                 filter_freqs)
+                                 filter_freqs, remove_source_shift)
 
     if fileformat == "hdf5":
         if chunking == "points":
@@ -125,7 +127,11 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt,
 
         grp = f_out.create_group("spherical")
         grp.attrs['points_number'] = npoints
-        grp.attrs['dt'] = dt
+        if dt is not None:
+            grp.attrs['dt'] = dt
+        else:
+            grp.attrs['dt'] = database.info.dt
+
         if "velocity" in dumpfields:
             dset_vel = grp.create_dataset("velocity", (npoints, ntimesteps, 3),
                                           chunks=chunks_vect,
@@ -160,7 +166,10 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt,
 
         grp = f_out.createGroup("spherical")
         grp.points_number = npoints
-        grp.dt = dt
+        if dt is not None:
+            grp.dt = dt
+        else:
+            grp.dt = database.info.dt
 
         grp.createDimension("points", npoints)
         grp.createDimension("timesteps", ntimesteps)
@@ -193,7 +202,9 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt,
                                            complevel=compression)
 
     for i in np.arange(npoints):
-        data = database.get_data_hybrid(source, receivers[i], dt, dumpfields,
+        data = database.get_data_hybrid(source, receivers[i], dumpfields,
+                                        remove_source_shift=remove_source_shift,
+                                        reconvolve_stf=reconvolve_stf, dt=dt,
                                         filter_freqs=filter_freqs)
 
         if "velocity" in dumpfields:
@@ -397,9 +408,11 @@ def _database_bounds_checks(receivers, database):
                          "deg." % (max_lat, db_min_lat, db_max_lat))
 
 
-def _get_ntimesteps(database, source, receiver, dt, filter_freqs):
-    data = database.get_data_hybrid(source, receiver, dt, dumpfields=(
-        "displacement"), filter_freqs=filter_freqs)
+def _get_ntimesteps(database, source, receiver, dt, filter_freqs,
+                    remove_source_shift):
+    data = database.get_data_hybrid(source, receiver, dt=dt, dumpfields=(
+        "displacement"), filter_freqs=filter_freqs,
+                                    remove_source_shift=remove_source_shift)
     disp = data["displacement"][:, 0]
 
     return len(disp)
