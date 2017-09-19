@@ -20,7 +20,7 @@ import numpy as np
 import obspy
 import obspy.core.inventory
 from obspy.signal.filter import lowpass
-from obspy.signal.filter import highpass
+from obspy.signal.filter import bandpass
 from obspy.signal.util import next_pow_2
 import obspy.io.xseed.parser
 import os
@@ -1569,6 +1569,7 @@ class HybridSources(object):
     :param coordsfile: File containing the coordinates and normals in
         spherical coordinates (rtp)
     :type coordsfile: str
+    filter_freqs (freqmin (highpass), freqmax (lowpass))
     """
 
     def __init__(self, fieldsfile, coordsfile, filter_freqs=None):
@@ -1676,17 +1677,14 @@ class HybridSources(object):
             d2 = -np.array(displ[:, 2])  # r
 
             if filter_freqs is not None:
-                d0 = lowpass(d0, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                d0 = highpass(d0, filter_freqs[1], 1. / dt,
+                d0 = bandpass(d0, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
-                d1 = lowpass(d1, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                d1 = highpass(d1, filter_freqs[1], 1. / dt,
+                d1 = bandpass(d1, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
-                d2 = lowpass(d2, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                d2 = highpass(d2, filter_freqs[1], 1. / dt,
+                d2 = bandpass(d2, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
 
             m_tt = (c_11 * n[0] + c_15 * n[2]) * w
@@ -1758,17 +1756,14 @@ class HybridSources(object):
                              c_33 * e_rr)
 
             if filter_freqs is not None:
-                t0 = lowpass(t0, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                t0 = highpass(t0, filter_freqs[1], 1. / dt,
+                t0 = bandpass(t0, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
-                t1 = lowpass(t1, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                t1 = highpass(t1, filter_freqs[1], 1. / dt,
+                t1 = bandpass(t1, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
-                t2 = lowpass(t2, filter_freqs[0], 1. / dt,
-                             corners=4, zerophase=True)
-                t2 = highpass(t2, filter_freqs[1], 1. / dt,
+                t2 = bandpass(t2, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
                               corners=4, zerophase=True)
 
             pointsources.append(ForceSource(latitude, longitude,
@@ -1786,7 +1781,3 @@ class HybridSources(object):
 
         return pointsources
 
-
-    def lp_sliprate(self, freq, corners=4, zerophase=False):
-        for ps in self.pointsources:
-            ps.lp_sliprate(freq, corners, zerophase)
