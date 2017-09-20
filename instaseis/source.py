@@ -1563,13 +1563,37 @@ class HybridSources(object):
     sources). The sources are defined from the fields extracted
     from the local hybrid solver.
 
-    :param fieldsfile: File containing displacement and strain from the
-        local hybrid solver.
-    :type fieldsfile: str
-    :param coordsfile: File containing the coordinates and normals in
-        spherical coordinates (rtp)
-    :type coordsfile: str
-    filter_freqs (freqmin (highpass), freqmax (lowpass))
+    :param fieldsfile: Path to hdf5 or netcdf file containing displacement and 
+        strain (in spherical coordinates tpr) from the local hybrid solver.
+        group 'spherical' must include datasets:
+        ['spherical/velocity'] and 
+        ['spherical/traction'] OR ['spherical/strain']
+        and attribute 'points_number' with the total number of gll points.
+    :type fieldsfile: string
+    :param coordsfile: Path to hdf5 or netcdf file containing the 
+        coordinates, normals, integration weights and elastic parameters mu, 
+        lambda, xi, phi and eta. Point coordinates and normals must be in 
+        spherical coordinates (tpr)
+        group 'spherical' must include datasets:
+        'spherical/normals'], ['spherical/weights'], ['spherical/coordinates']
+        and attribute 'points_number' with the total number of gll points.
+        group 'elastic_params' must include datasets:
+        ['elastic_params/mu'], ['elastic_params/lambda'], 
+        ['elastic_params/xi'], ['elastic_params/phi'], ['elastic_params/eta']
+    :type coordsfile: string
+    :param filter_freqs: A tuple (freqmin, freqmax) specifying the 
+        minimum (highpass) and maximum (lowpass) frequencies for bandpass 
+        filtering of the source time functions of the HybridSource. Recall
+        that the source time functions come from the local simulation and
+        need to be bandpass filtered for re-propagation with the reciprocal
+        instaseis database. 
+    :type filter_freqs: tuple, optional
+    
+        >>> import instaseis
+        >>> instaseis.HybridSources(
+        ...     fieldsfile="path/to/local_output.hdf5",
+        ...     coordsfile="path/to/tpr_coordinates.hdf5"
+        ...     filter_freqs=(0.01, 0.125))
     """
 
     def __init__(self, fieldsfile, coordsfile, filter_freqs=None):
@@ -1584,6 +1608,8 @@ class HybridSources(object):
 
     def _create_pointsources(self, fieldsfile, coordsfile, filter_freqs=None):
         """generate point sources from local simulation fields"""
+
+        # review add local coordinate system + rotation matrix
 
         f_fields = h5py.File(fieldsfile, "r")
         f_coords = h5py.File(coordsfile, "r")
@@ -1610,7 +1636,7 @@ class HybridSources(object):
         # netcdf, dt is a numpy array of length 1.
         if type(dt) is np.ndarray:
             dt = dt[0]
-
+        # review what we decide on? displacement+strain? displacement+traction?
         displ_all = f_fields['spherical/velocity']
         traction_all = None
         strain_all = None

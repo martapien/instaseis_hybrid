@@ -448,7 +448,20 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         )
 
     def _get_elastic_params(self, source, receivers, outfile):
-
+        """
+        Extract elastic parameters mu, lambda, xi, phi, eta 
+        from a netcdf based Instaseis database. Saves extracted data in a hdf5 
+        file.
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: list of :class:`instaseis.source.Receiver`
+        :param receiver: The receivers that define a list of points on which we 
+            wish to extract elastic parameters.
+        :type outfile: string
+        :param outfile: Path to the .hdf5 file where we wish to save the 
+            "elastic_params" dataset with mu, lambda, xi, phi, eta 
+        """
         npoints = len(receivers.network[0])
         mu = np.zeros(npoints)
         rho = np.zeros(npoints)
@@ -507,11 +520,46 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
     @abstractmethod
     def _get_params(self, element_info):
+        """
+        Has to be implemented by each implementation.
+
+        Must return a dictionary with the keys being elastic parameters, and the
+        values the corresponding data arrays.
+
+        :param element_info: Information about the element containing the
+            coordinates where parameters should be extracted.
+        """
         raise NotImplementedError
 
     def _get_data_hybrid(self, source, receiver, dt, dumpfields,
-                                filter_freqs, components):
+                         filter_freqs, components):
+        """
+        Extract data for hybrid modelling from a netcdf based Instaseis 
+        database. Outputs a dictionary with keys being the tpr vector or 
+        voigt tensor indices and the values the corresponding 
+        data arrays (in tpr).
 
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :param receiver: The receiver.
+        :type dumpfields: tuple of str
+        :param dumpfields: Which fields to dump. Must be a tuple
+            containing any combination of ``"displacement"``, ``"velocity"``, 
+            ``"strain"``, and ``"traction"``.
+        :type filter_freqs: tuple of float, optional
+        :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter 
+            AxiSEM data. Defaults to None. 
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the dumped fields. Resampling is 
+            done using a Lanczos kernel. If None, defaults to the dt of the 
+            daatbase.
+        :type components: a tuple of string
+        :param components: For hybrid modelling, components=(
+            "hybrid") if we wish to extract only displacement/velocity. 
+            To extract strains/tractions, set components=("hybrid", "strain")
+        """
         if self.info.is_reciprocal:  # no cover: the db is never reciprocal
             a, b = source, receiver
         else:

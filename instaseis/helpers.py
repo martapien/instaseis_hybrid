@@ -178,8 +178,14 @@ def rfftfreq(n, d=1.0):  # pragma: no cover
 
 def c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
                 i, j, k, l):
-
-    deltaf = np.zeros([3,3])
+    """
+    Outputs the ijkl element of the elasticity tensor (for a hexagonal solid) 
+    from the elastic parameters lambda, mu, xi, phi and eta, and the angles 
+    theta and phi that define the rotation axis.
+    
+    See Nolet (2008) equation 16.2
+    """
+    deltaf = np.zeros([3, 3])
     deltaf[0, 0] = 1.
     deltaf[1, 1] = 1
     deltaf[2, 2] = 1

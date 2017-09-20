@@ -521,10 +521,10 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                       kernelwidth=12):
 
         """
-        Extract seismograms for a hybrid source from a local simulation.
+        Extract seismograms for a hybrid source (constructed from an outcome 
+        of a local simulation) from a reciprocal Instaseis database.
         :param sources: A collection of point sources.
-        :type sources: :class:`~instaseis.source.FiniteSource` or list of
-            :class:`~instaseis.source.Source` objects.
+        :type sources: :class:`~instaseis.source.HybridSources`
         :param receiver: The seismic receiver.
         :type receiver: :class:`instaseis.source.Receiver`
         :type components: tuple of str, optional
@@ -538,20 +538,12 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
         :type dt: float, optional
         :param dt: Desired sampling rate of the seismograms. Resampling is done
-            using a Lanczos kernel.
+            using a Lanczos kernel. If specified, the sampling rate must be 
+            higher than the sampling rate of the local hybrid simulation.
         :type kernelwidth: int, optional
         :param kernelwidth: The width of the sinc kernel used for resampling in
             terms of the original sampling interval. Best choose something
             between 10 and 20.
-        :type correct_mu: bool, optional
-        :param correct_mu: Correct the source magnitude for the actual shear
-            modulus from the model.
-        :type progress_callback: function, optional
-        :param progress_callback: Optional callback function that will be
-            called with current source number and the number of total
-            sources for each calculated source. Useful for integration into
-            user interfaces to provide some kind of progress information. If
-            the callback returns ``True``, the calculation will be cancelled.
 
         :returns: Multi component hybrid source seismogram.
         :rtype: :class:`obspy.core.stream.Stream`
@@ -731,30 +723,60 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         return st
 
     def get_elastic_params(self, source, receivers, outfile):
+        """
+        Extract elastic parameters mu, lambda, xi, phi, eta 
+        from an Instaseis database. Saves extracted data in a hdf5 file.
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: list of :class:`instaseis.source.Receiver`
+        :param receiver: The receivers that define a list of points on which we 
+            wish to extract elastic parameters.
+        :type outfile: string
+        :param outfile: Path to the .hdf5 file where we wish to save the 
+            "elastic_params" dataset with mu, lambda, xi, phi, eta 
+        """
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
         self._get_elastic_params(source, receivers, outfile)
 
     def get_data_hybrid(self, source, receiver, dumpfields,
                         remove_source_shift=True,
-                        reconvolve_stf=False, dt=None, filter_freqs=None,
+                        reconvolve_stf=False, filter_freqs=None, dt=None,
                         kernelwidth=12):
         """
-        Extract data for hybrid modelling from a netCDF based Instaseis
-        database. Outputs dumpfields in tpr.
+        Extract data for hybrid modelling from an Instaseis database. 
+        Outputs a dictionary with dumpfields as keys and data in tpr.
 
         :type source: :class:`instaseis.source.Source` or
             :class:`instaseis.source.ForceSource`
         :param source: The source.
         :type receiver: :class:`instaseis.source.Receiver`
         :param receiver: The receiver.
-        :type dt: dt: float
-        :param dt: Desired sampling rate of the dumped fields. Resampling is 
-            done using a Lanczos kernel.
         :type dumpfields: tuple of str
         :param dumpfields: Which fields to dump. Must be a tuple
             containing any combination of ``"displacement"``, ``"velocity"``, 
             ``"strain"``, and ``"traction"``.
+        :type remove_source_shift: bool, optional
+        :param remove_source_shift: Cut all samples before the peak of the
+            source time function. This has the effect that the first sample
+            is the origin time of the source. Defaults to True.
+        :type reconvolve_stf: bool, optional
+        :param reconvolve_stf: Deconvolve the source time function used in
+            the AxiSEM run and convolve with the STF attached to the source.
+            For this to be stable, the new STF needs to bandlimited. 
+            Defaults to False.
+        :type filter_freqs: tuple of float, optional
+        :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter 
+            AxiSEM data. Defaults to None. 
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the dumped fields. Resampling is 
+            done using a Lanczos kernel. If None, defaults to the dt of the 
+            daatbase.
+        :type kernelwidth: int, optional
+        :param kernelwidth: The width of the sinc kernel used for resampling in
+            terms of the original sampling interval. Best choose something
+            between 10 and 20.
         """
 
         if self.info.is_reciprocal:

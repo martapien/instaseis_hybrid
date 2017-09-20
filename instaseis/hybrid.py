@@ -26,46 +26,66 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                            reconvolve_stf=False,
                            filter_freqs=None,
                            dumpfields=("velocity", "strain"),
-                           chunking="points", compression=5,
+                           chunking="points", compression=4,
                            fileformat="hdf5"):
-
     """
-    A method to generate the hdf5/netcdf file with the background field for the 
-    local hybrid simulation. Dumps displacements, velocities, strains or 
-    tractions.
+    A method to generate the hdf5/netcdf file with the input (background, 
+    injected) field for a local hybrid simulation. Dumps displacements, 
+    velocities, strains or tractions.
 
-    :param outputfile: A path to the output .hdf5 file that is going to be 
-        created, e.g. "/home/user/hybrid_output.hdf5"
-    :type outputfile: str
-    :param inputfile: A path to a .txt or .hdf5 file with spherical/local
+    :param outputfile: A path to the output hdf5/netcdf file that is 
+        created, e.g. "/home/user/hybrid_output.hdf5". The output file includes
+        group 'spherical' with datasets corrseponding to dumpfields, 
+        e.g. (by default):
+        ['spherical/velocity'] and ['spherical/strain']
+    :type outputfile: string
+    :param inputfile: A path to a text or hdf5/netcdf file with spherical/local
         coordinates of points on the boundary of the local domain of the hybrid
-        method. Txt file: three columns (radius, latitude, longitude). Hdf5
-        file: group spherical with dataset coordinates ([npoints,3], 
-        where the second dimension is rtp and with attribute 
-        points_number defining the total number of boundary points.
-    :type inputfile: str
+        method. Txt file: three columns (radius, latitude, longitude). 
+        Hdf5/netcdf file: group spherical with dataset coordinates 
+        ([npoints, 3], where the second dimension is tpr, and with attribute 
+        points_number defining the total number of gll boundary points. If 
+        coordinates are in the local frame of reference, dataset spherical 
+        requires an attribute rotation_matrix for right-multiplication to 
+        rotate to tpr.
+    :type inputfile: string
     :param source: The source of the hybrid simulation.
     :type source: :class: '~instaseis.source.Source' object
     :param database: A forward Instaseis database to extract fields on the
         boundary of the local hybrid domain.
     :type database: :class: '~instaseis.InstaseisDB' object
-    :param dt:
-    :type dt: 
-    :param filter_freqs: [0] - lowpass; [1] - highpass
-    :type filter_freqs: 
-    :param dumpfields: Which fields to dump. Possible options: "velocity", 
-    "strain", "traction", "displacement". Defaults to ("velocity, strain").
-    :type dumpfields: tuple of str, optional
+    :param dt: Desired sampling rate of the dumped fields. Resampling is 
+        done using a Lanczos kernel. If None, defaults to the dt of the 
+        daatbase. 
+    :type dt: float, optional
+    :param remove_source_shift: Cut all samples before the peak of the
+            source time function. This has the effect that the first sample
+            is the origin time of the source. Defaults to True.
+    :type remove_source_shift: bool, optional
+    :param reconvolve_stf: Deconvolve the source time function used in
+            the AxiSEM run and convolve with the STF attached to the source.
+            For this to be stable, the new STF needs to bandlimited. 
+            Defaults to False.
+    :type reconvolve_stf: bool, optional
+    :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter 
+            AxiSEM data. Defaults to None. 
+    :type filter_freqs: tuple, optional
+     :param dumpfields: Which fields to dump. Must be a tuple
+            containing any combination of ``"displacement"``, ``"velocity"``, 
+            ``"strain"``, and ``"traction"``. Defaults to ``"velocity"`` and 
+            ``"traction"``.
+    :type dumpfields: tuple of string, optional
     :param chunking: Flag to define the hdf5 chunking scheme. Possible 
-        options are "points"(the fast read is a single time step for all 
+        options are "points" (the fast read is a single time step for all 
         points on the boundary) and "times" (the fast read is an entire 
         time series for a single point on the boundary). Defaults to "points".
-    :type chunking: str
-    :param compression: 
-    :type compression: str
+    :type chunking: string, optional
+    :param compression: Compression level of gzip for hdf5/netcdf. 
+        May be an integer from 0 to 9, default is 4.
+    :type compression: integer, optional
     :param fileformat: Format of the output file. Possible formats "hdf5" or
         "netcdf". Defaults to "hdf5".
-    type fileformat: str, optional
+    :type fileformat: string, optional
     """
 
     if database.info.is_reciprocal:
@@ -287,10 +307,10 @@ def _make_receivers_from_spherical(inputfile):
     """
     Method to handle hybrid boundary input (in spherical coordinates) defined 
     by the mesh of a local solver.
-    :param inputfile: path to a .txt or .hdf5 file with spherical/local
+    :param inputfile: path to a text or hdf5/netcdf file with spherical/local
         coordinates of points on the boundary of the local domain of the hybrid
         method. See more in hybrid_generate_output.
-    :type inputfile: str
+    :type inputfile: string
     """
     receivers = []
     if inputfile.endswith('.txt'):
@@ -334,8 +354,8 @@ def _make_receivers_from_local(inputfile):
     """
     Method to handle hybrid boundary input (in local coordinates) defined 
     by the mesh of a local solver.
-    :param inputfile: path to a .hdf5 file with coordinates of points on the 
-        boundary of the local domain of the hybrid method. See more in 
+    :param inputfile: path to a hdf5/netcdf file with coordinates of points on 
+        the boundary of the local domain of the hybrid method. See more in 
         hybrid_generate_output.
     :type inputfile: str
     """
@@ -371,7 +391,6 @@ def _make_receivers_from_local(inputfile):
 
 
 def _database_bounds_checks(receivers, database):
-
     db_min_depth = database.info.planet_radius - database.info.max_radius
     db_max_depth = database.info.planet_radius - database.info.min_radius
     db_min_colat = database.info.min_d
@@ -419,8 +438,11 @@ def _get_ntimesteps(database, source, receiver, dt, filter_freqs,
 
 
 class HybridReceiversBoundaryInternalTest(object):
-    """Instaseis Internal Test
-     a class to generate a network of receivers"""
+    """
+    Instaseis Internal Test is a class to generate a network of receivers
+    (recursive generation of a sphere). Also outputs a hdf5 file with 
+    coordinates. 
+    """
     def __init__(self, latitude, longitude, depth_in_m, savepath, radius=45000,
                  recursion_level=3):
         self.latitude = float(latitude)
