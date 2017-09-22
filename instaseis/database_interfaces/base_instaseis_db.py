@@ -603,7 +603,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                                new_start=0, new_dt=new_dt,
                                                new_npts=new_npts, a=12,
                                                window="blackman")
-            
+
             for comp in components:
                 # We assume here that the sliprate is well-behaved,
                 # e.g. zeros at the boundaries and no energy above the mesh
