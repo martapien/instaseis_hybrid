@@ -516,7 +516,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         return st
 
     def get_seismograms_hybrid_source(self, sources, receiver,
-                                      components=("Z", "N", "E"),
+                                      components=None,
                                       kind='displacement', dt=None,
                                       kernelwidth=12):
 
@@ -554,8 +554,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         if not self.info.is_reciprocal:
             raise NotImplementedError
 
-        data_summed_moment = {}
-        data_summed_force = {}
         data_summed = {}
 
         for _i, source in enumerate(sources.pointsources):
@@ -583,9 +581,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             if source.dt is None or source.sliprate is None:
                 raise ValueError("Source has no source time function.")
 
-            if STF_MAP[self.info.stf] not in [0, 1]:
+            if STF_MAP[self.info.stf] not in [1]:
                 raise NotImplementedError(
                     'deconvolution not implemented for stf %s'
+                    'reciprocal database for hybrid is required to have a '
+                    'gauss_0 or dirac_0 stf'
                     % (self.info.stf))
 
             stf_deconv_map = {
@@ -603,7 +603,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                                new_start=0, new_dt=new_dt,
                                                new_npts=new_npts, a=12,
                                                window="blackman")
-
+            
             for comp in components:
                 # We assume here that the sliprate is well-behaved,
                 # e.g. zeros at the boundaries and no energy above the mesh
@@ -634,18 +634,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
                 data[comp] = np.fft.irfft(dataf * f)[:new_npts]
 
-            if isinstance(source, Source):
-                for comp in components:
-                    if comp in data_summed_moment:
-                        data_summed_moment[comp] += data[comp]
-                    else:
-                        data_summed_moment[comp] = data[comp]
-            if isinstance(source, ForceSource):
-                for comp in components:
-                    if comp in data_summed_force:
-                        data_summed_force[comp] += data[comp]
-                    else:
-                        data_summed_force[comp] = data[comp]
+            for comp in components:
+                if comp in data_summed:
+                    data_summed[comp] += data[comp]
+                else:
+                    data_summed[comp] = data[comp]
 
         if dt is not None:
             if dt > new_dt:
@@ -653,15 +646,10 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             for comp in components:
                 # We don't need to align a sample to the peak of the source
                 # time function here.
-                new_npts = int(round((len(data_summed_force[comp]) - 1) *
+                new_npts = int(round((len(data_summed[comp]) - 1) *
                                      new_dt / dt, 6) + 1)
-                data_summed_moment[comp] = lanczos_interpolation(
-                    data=np.require(data_summed_moment[comp],
-                                    requirements=["C"]),
-                    old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
-                    new_npts=new_npts, a=kernelwidth, window="blackman")
-                data_summed_force[comp] = lanczos_interpolation(
-                    data=np.require(data_summed_force[comp],
+                data_summed[comp] = lanczos_interpolation(
+                    data=np.require(data_summed[comp],
                                     requirements=["C"]),
                     old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
                     new_npts=new_npts, a=kernelwidth, window="blackman")
@@ -675,11 +663,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 # important for testing.
                 if round(dt / new_dt, 6) != 1.0:
                     affected_area = kernelwidth * new_dt
-                    data_summed_moment[comp] = \
-                        data_summed_moment[comp][
-                        :-int(np.ceil(affected_area / dt))]
-                    data_summed_force[comp] = \
-                        data_summed_force[comp][
+                    data_summed[comp] = \
+                        data_summed[comp][
                         :-int(np.ceil(affected_area / dt))]
 
         if dt is None:
@@ -689,25 +674,13 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         # Integrate/differentiate here. No need to do it for every single
         # seismogram and stack the errors.
-        n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
+        n_derivative = KIND_MAP[kind]
 
         if n_derivative:
-            for comp in data_summed_moment.keys():
+            for comp in data_summed.keys():
                 _diff_and_integrate(n_derivative=n_derivative,
-                                    data=data_summed_moment, comp=comp,
+                                    data=data_summed, comp=comp,
                                     dt_out=dt_out)
-
-        n_derivative += 1
-
-        if n_derivative:
-            for comp in data_summed_force.keys():
-                _diff_and_integrate(n_derivative=n_derivative,
-                                    data=data_summed_force, comp=comp,
-                                    dt_out=dt_out)
-
-        for comp in data_summed_moment.keys():
-            data_summed[comp] = data_summed_moment[comp][:] + \
-                                data_summed_force[comp][:]
 
         # Convert to an ObsPy Stream object.
         st = Stream()
@@ -747,7 +720,15 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         """
         Extract data for hybrid modelling from an Instaseis database. 
         Outputs a dictionary with dumpfields as keys and data in tpr.
-
+        Note that this implementation is not consistent with the general 
+        instaseis logic. If we request displacement from a forward Instaseis 
+        database with gaussian STF, we are going to get the actual 
+        displacement with respect to the gaussian. (In classic Instaseis, 
+        we always get displacement with respect to the error function, 
+        i.e. requesting displacement from a forward Instaseis 
+        database with gaussian STF would mean that the displacement of this 
+        database is integrated. 
+        
         :type source: :class:`instaseis.source.Source` or
             :class:`instaseis.source.ForceSource`
         :param source: The source.
@@ -788,12 +769,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         else:
             components = ("hybrid")
 
-        # review: we can either correct for the different axisem stfs here,
-        # at extraction, and just differentiate/integrate according to the
-        # general instaseis consensus, so that
-        # displacement/velocity/acceleration always extract the same arrays
-        # regardless of the stf of the forward database, i.e.
-        # if self.info.stf ==  "errorf": (blabla) ??
         data = self._get_data_hybrid(source, receiver, dt, dumpfields,
                                      filter_freqs, components)
         # data comes out in tpr

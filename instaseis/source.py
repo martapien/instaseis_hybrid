@@ -1566,7 +1566,7 @@ class HybridSources(object):
     :param fieldsfile: Path to hdf5 or netcdf file containing displacement and 
         strain (in spherical coordinates tpr) from the local hybrid solver.
         group 'spherical' must include datasets:
-        ['spherical/velocity'] and 
+        ['spherical/displacement'] and 
         ['spherical/traction'] OR ['spherical/strain']
         and attribute 'points_number' with the total number of gll points.
     :type fieldsfile: string
@@ -1636,8 +1636,8 @@ class HybridSources(object):
         # netcdf, dt is a numpy array of length 1.
         if type(dt) is np.ndarray:
             dt = dt[0]
-        # review what we decide on? displacement+strain? displacement+traction?
-        displ_all = f_fields['spherical/velocity']
+
+        displ_all = f_fields['spherical/displacement']
         traction_all = None
         strain_all = None
         if 'spherical/traction' in f_fields:
