@@ -44,7 +44,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
         method. Txt file: three columns (radius, latitude, longitude). 
         Hdf5/netcdf file: group spherical with dataset coordinates 
         ([npoints, 3], where the second dimension is tpr, and with attribute 
-        points_number defining the total number of gll boundary points. If 
+        nb_points defining the total number of gll boundary points. If 
         coordinates are in the local frame of reference, dataset spherical 
         requires an attribute rotation_matrix for right-multiplication to 
         rotate to tpr.
@@ -123,7 +123,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             normals = f_in['spherical/normals'][:, :]  # review in tpr
         elif "local" in f_in:
             normals = f_in['local/normals'][:, :]
-            rotmat = f_in['local'].attrs['rotation_matrix']
+            rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
             normals = np.dot(normals, rotmat)
         mu_all = f_in['elastic_params/mu']
         lbd_all = f_in['elastic_params/lambda']
@@ -146,7 +146,8 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             raise NotImplementedError("Unknown chunking flag.")
 
         grp = f_out.create_group("spherical")
-        grp.attrs['points_number'] = npoints
+        grp.attrs['nb_points'] = npoints
+        grp.attrs['nb_timesteps'] = ntimesteps
         if dt is not None:
             grp.attrs['dt'] = dt
         else:
@@ -185,7 +186,8 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             raise NotImplementedError("Unknown chunking flag.")
 
         grp = f_out.createGroup("spherical")
-        grp.points_number = npoints
+        grp.nb_points = npoints
+        grp.nb_timesteps = ntimesteps
         if dt is not None:
             grp.dt = dt
         else:
@@ -313,25 +315,13 @@ def _make_receivers_from_spherical(inputfile):
     :type inputfile: string
     """
     receivers = []
-    if inputfile.endswith('.txt'):
-        f = open(inputfile, "r")
-        for line in f:
-            rad, lat, lon = line.split()
-            lat = float(lat)
-            lon = float(lon)
-            depth = (6371.0 - float(rad)) * 1000.0
-            receivers.append(Receiver(
-                latitude=lat,
-                longitude=lon,
-                depth_in_m=depth))
-        f.close()
 
-    elif inputfile.endswith('.hdf5') or inputfile.endswith('.nc'):
+    if inputfile.endswith('.hdf5') or inputfile.endswith('.nc'):
         f = h5py.File(inputfile, 'r')
         if "spherical/coordinates" not in f:
             raise ValueError('spherical/coordinates not found in file')
         coords = f['spherical/coordinates'][:, :]  # review tpr
-        items = f['spherical'].attrs['points_number']
+        items = f['spherical'].attrs['nb_points']
         if type(items) is np.ndarray:
             items = items[0]
 
@@ -368,8 +358,8 @@ def _make_receivers_from_local(inputfile):
         raise ValueError('local/coordinates not found in file')
 
     coords = f['local/coordinates'][:, :]
-    rotmat = f['local'].attrs['rotation_matrix']
-    items = f['local'].attrs['points_number']
+    rotmat = f['local'].attrs['rotmat_xyz_loc_to_glob']
+    items = f['local'].attrs['nb_points']
 
     if type(items) is np.ndarray:
         items = items[0]
@@ -519,7 +509,7 @@ class HybridReceiversBoundaryInternalTest(object):
                 normals[i, :], receivers[i].longitude_rad,
                 receivers[i].colatitude_rad)
         normals *= -1.0
-        f = h5py.File(savepath, 'w')
+        f = h5py.File(savepath, 'w', libver='latest')
         grp = f.create_group("spherical")
         dset = grp.create_dataset("coordinates", data=tpr,
                                   compression="gzip", compression_opts=4)
@@ -527,7 +517,7 @@ class HybridReceiversBoundaryInternalTest(object):
                                   compression="gzip", compression_opts=4)
         dset = grp.create_dataset("weights", data=areas,
                                   compression="gzip", compression_opts=4)
-        grp.attrs['points_number'] = centroids.shape[0]
+        grp.attrs['nb_points'] = centroids.shape[0]
         f.close()
 
         receivers = [receivers, normals, areas, centroids]

@@ -1568,7 +1568,7 @@ class HybridSources(object):
         group 'spherical' must include datasets:
         ['spherical/displacement'] and 
         ['spherical/traction'] OR ['spherical/strain']
-        and attribute 'points_number' with the total number of gll points.
+        and attribute 'nb_points' with the total number of gll points.
     :type fieldsfile: string
     :param coordsfile: Path to hdf5 or netcdf file containing the 
         coordinates, normals, integration weights and elastic parameters mu, 
@@ -1576,7 +1576,7 @@ class HybridSources(object):
         spherical coordinates (tpr)
         group 'spherical' must include datasets:
         'spherical/normals'], ['spherical/weights'], ['spherical/coordinates']
-        and attribute 'points_number' with the total number of gll points.
+        and attribute 'nb_points' with the total number of gll points.
         group 'elastic_params' must include datasets:
         ['elastic_params/mu'], ['elastic_params/lambda'], 
         ['elastic_params/xi'], ['elastic_params/phi'], ['elastic_params/eta']
@@ -1592,7 +1592,7 @@ class HybridSources(object):
         >>> import instaseis
         >>> instaseis.HybridSources(
         ...     fieldsfile="path/to/local_output.hdf5",
-        ...     coordsfile="path/to/tpr_coordinates.hdf5"
+        ...     coordsfile="path/to/tpr_coordinates.hdf5",
         ...     filter_freqs=(0.01, 0.125))
     """
 
@@ -1614,8 +1614,8 @@ class HybridSources(object):
         f_fields = h5py.File(fieldsfile, "r")
         f_coords = h5py.File(coordsfile, "r")
 
-        fields_npoints = f_fields['spherical'].attrs['points_number']
-        coords_npoints = f_coords['spherical'].attrs['points_number']
+        fields_npoints = f_fields['spherical'].attrs['nb_points']
+        coords_npoints = f_coords['spherical'].attrs['nb_points']
 
         if coords_npoints != fields_npoints:
             raise ValueError("The number of points in the fieldsfile and in "
@@ -1806,4 +1806,3 @@ class HybridSources(object):
                                             sliprate=t2, dt=dt))
 
         return pointsources
-
