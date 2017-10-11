@@ -378,6 +378,105 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
         return final_displacement
 
+    def _get_displacement_and_strain_interp(self, mesh, id_elem, gll_point_ids,
+                                            G, GT, col_points_xi,
+                                            col_points_eta, corner_points,
+                                            eltype, axis, xi, eta):
+        if id_elem not in mesh.strain_buffer:
+            # Single precision in the NetCDF files but the later interpolation
+            # routines require double precision. Assignment to this array will
+            # force a cast.
+            utemp = np.zeros((mesh.ndumps, mesh.npol + 1, mesh.npol + 1, 3),
+                             dtype=np.float64, order="F")
+
+            # The list of ids we have is unique but not sorted.
+            ids = gll_point_ids.flatten()
+            s_ids = np.sort(ids)
+            mesh_dict = mesh.f["Snapshots"]
+
+            # Load displacement from all GLL points.
+            for i, var in enumerate(["disp_s", "disp_p", "disp_z"]):
+                if var not in mesh_dict:
+                    continue
+
+                # Make sure it can work with normal and transposed arrays to
+                # support legacy as well as modern, transposed databases.
+                time_axis = mesh.time_axis[var]
+
+                # Chunk the I/O by requesting successive indices in one go -
+                # this actually makes quite a big difference on some file
+                # systems.
+                chunks = helpers.io_chunker(s_ids)
+                _temp = []
+                m = mesh_dict[var]
+                if time_axis == 0:
+                    for _c in chunks:
+                        if isinstance(_c, list):
+                            _temp.append(m[:, _c[0]:_c[1]])
+                        else:
+                            _temp.append(m[:, _c])
+                else:
+                    for _c in chunks:
+                        if isinstance(_c, list):
+                            _temp.append(m[_c[0]:_c[1], :].T)
+                        else:
+                            _temp.append(m[_c, :].T)
+
+                _t = np.empty((_temp[0].shape[0], 25),
+                              dtype=_temp[0].dtype)
+
+                k = 0
+                for _i in _temp:
+                    if len(_i.shape) == 1:
+                        _t[:, k] = _i
+                        k += 1
+                    else:
+                        for _j in range(_i.shape[1]):
+                            _t[:, k + _j] = _i[:, _j]
+
+                        k += _j + 1
+
+                _temp = _t
+
+                for ipol in range(mesh.npol + 1):
+                    for jpol in range(mesh.npol + 1):
+                        idx = ipol * 5 + jpol
+                        utemp[:, jpol, ipol, i] = \
+                            _temp[:, np.argwhere(
+                                s_ids == ids[idx])[0][0]]
+
+            strain_fct_map = {
+                "monopole": sem_derivatives.strain_monopole_td,
+                "dipole": sem_derivatives.strain_dipole_td,
+                "quadpole": sem_derivatives.strain_quadpole_td}
+
+            strain = strain_fct_map[mesh.excitation_type](
+                utemp, G, GT, col_points_xi, col_points_eta, mesh.npol,
+                mesh.ndumps, corner_points, eltype, axis)
+
+            mesh.strain_buffer.add(id_elem, strain)
+            mesh.displ_buffer.add(id_elem, utemp)
+        else:
+            strain = mesh.strain_buffer.get(id_elem)
+            utemp = mesh.displ_buffer.get(id_elem)
+
+        final_displacement = np.empty((utemp.shape[0], 3), order="F")
+        final_strain = np.empty((strain.shape[0], 6), order="F")
+
+        for i in range(3):
+            final_displacement[:, i] = spectral_basis.lagrange_interpol_2D_td(
+                col_points_xi, col_points_eta, utemp[:, :, :, i], xi, eta)
+
+        for i in range(6):
+            final_strain[:, i] = spectral_basis.lagrange_interpol_2D_td(
+                col_points_xi, col_points_eta, strain[:, :, :, i], xi, eta)
+
+        if not mesh.excitation_type == "monopole":
+            final_strain[:, 3] *= -1.0
+            final_strain[:, 5] *= -1.0
+
+        return final_displacement, final_strain
+
     def _get_info(self):
         """
         Returns a dictionary with information about the currently loaded

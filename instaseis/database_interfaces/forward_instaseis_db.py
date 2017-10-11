@@ -99,18 +99,51 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
 
-        displ_1 = self._get_displacement(self.meshes.m1, ei.id_elem,
-                                         ei.gll_point_ids, ei.col_points_xi,
-                                         ei.col_points_eta, ei.xi, ei.eta)
-        displ_2 = self._get_displacement(self.meshes.m2, ei.id_elem,
-                                         ei.gll_point_ids, ei.col_points_xi,
-                                         ei.col_points_eta, ei.xi, ei.eta)
-        displ_3 = self._get_displacement(self.meshes.m3, ei.id_elem,
-                                         ei.gll_point_ids, ei.col_points_xi,
-                                         ei.col_points_eta, ei.xi, ei.eta)
-        displ_4 = self._get_displacement(self.meshes.m4, ei.id_elem,
-                                         ei.gll_point_ids, ei.col_points_xi,
-                                         ei.col_points_eta, ei.xi, ei.eta)
+        if "hybrid" in components and "strain" in components:
+            if not isinstance(source, Source):
+                raise NotImplementedError
+            if self.info.dump_type != 'displ_only':
+                raise NotImplementedError
+
+            if ei.axis:
+                G = self.parsed_mesh.G2
+                GT = self.parsed_mesh.G1T
+            else:
+                G = self.parsed_mesh.G2
+                GT = self.parsed_mesh.G2T
+
+            # collect strain in final_strain array
+            # final_strain is in Voigt notation [ss, pp, zz, sp, sz, zp]
+            displ_1, strain_1 = self._get_displacement_and_strain_interp(
+                self.meshes.m1, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+            displ_2, strain_2 = self._get_displacement_and_strain_interp(
+                self.meshes.m2, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+            displ_3, strain_3 = self._get_displacement_and_strain_interp(
+                self.meshes.m3, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+            displ_4, strain_4 = self._get_displacement_and_strain_interp(
+                self.meshes.m4, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+
+        else:
+            displ_1 = self._get_displacement(self.meshes.m1, ei.id_elem,
+                                             ei.gll_point_ids, ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi, ei.eta)
+            displ_2 = self._get_displacement(self.meshes.m2, ei.id_elem,
+                                             ei.gll_point_ids, ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi, ei.eta)
+            displ_3 = self._get_displacement(self.meshes.m3, ei.id_elem,
+                                             ei.gll_point_ids, ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi, ei.eta)
+            displ_4 = self._get_displacement(self.meshes.m4, ei.id_elem,
+                                             ei.gll_point_ids, ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi, ei.eta)
 
         mij = source.tensor / self.parsed_mesh.amplitude
         # mij is [m_rr, m_tt, m_pp, m_rt, m_rp, m_tp]
@@ -168,38 +201,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 data["Z"] = final[:, 2]
 
         if "hybrid" in components:
-            if not isinstance(source, Source):
-                raise NotImplementedError
-            if self.info.dump_type != 'displ_only':
-                raise NotImplementedError
-
             if "strain" in components:
-                if ei.axis:
-                    G = self.parsed_mesh.G2
-                    GT = self.parsed_mesh.G1T
-                else:
-                    G = self.parsed_mesh.G2
-                    GT = self.parsed_mesh.G2T
-
-                # collect strain in final_strain array
-                # final_strain is in Voigt notation [ss, pp, zz, sp, sz, zp]
-                strain_1 = self._get_strain_interp(self.meshes.m1, ei.id_elem,
-                        ei.gll_point_ids, G, GT, ei.col_points_xi,
-                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
-                        ei.xi, ei.eta)
-                strain_2 = self._get_strain_interp(self.meshes.m2, ei.id_elem,
-                        ei.gll_point_ids, G, GT, ei.col_points_xi,
-                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
-                        ei.xi, ei.eta)
-                strain_3 = self._get_strain_interp(self.meshes.m3, ei.id_elem,
-                        ei.gll_point_ids, G, GT, ei.col_points_xi,
-                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
-                        ei.xi, ei.eta)
-                strain_4 = self._get_strain_interp(self.meshes.m4, ei.id_elem,
-                        ei.gll_point_ids, G, GT, ei.col_points_xi,
-                        ei.col_points_eta, ei.corner_points, ei.eltype, ei.axis,
-                        ei.xi, ei.eta)
-
                 final_strain = np.zeros((strain_1.shape[0], 6), dtype="float64")
 
                 # monopole
@@ -255,6 +257,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                         rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
                         final_strain[i, :], receiver.longitude_rad,
                         receiver.colatitude_rad)
+
                 strain = {}
                 strain['t'] = final_strain[:, 0]
                 strain['p'] = final_strain[:, 1]
