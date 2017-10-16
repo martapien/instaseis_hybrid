@@ -15,6 +15,7 @@ from __future__ import (absolute_import, division, print_function,
 import numpy as np
 import h5py
 import netCDF4
+from math import ceil 
 
 from . import rotations
 from .source import Receiver
@@ -41,7 +42,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     :type outputfile: string
     :param inputfile: A path to a text or hdf5/netcdf file with spherical/local
         coordinates of points on the boundary of the local domain of the hybrid
-        method. Txt file: three columns (radius, latitude, longitude). 
+        method.
         Hdf5/netcdf file: group spherical with dataset coordinates 
         ([npoints, 3], where the second dimension is tpr, and with attribute 
         nb_points defining the total number of gll boundary points. If 
@@ -134,7 +135,8 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     npoints = len(receivers)
     ntimesteps = _get_ntimesteps(database, source, receivers[0], dt,
                                  filter_freqs, remove_source_shift)
-
+    npoints_temp = ceil(npoints/4.0)
+    #npoints_temp = npoints
     if fileformat == "hdf5":
         if chunking == "points":
             chunks_vect = (npoints, 1, 3)
@@ -154,22 +156,27 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             grp.attrs['dt'] = database.info.dt
 
         if "velocity" in dumpfields:
+            vel = np.zeros((npoints_temp, ntimesteps, 3))
             dset_vel = grp.create_dataset("velocity", (npoints, ntimesteps, 3),
                                           chunks=chunks_vect,
                                           compression="gzip",
                                           compression_opts=compression)
+
         if "displacement" in dumpfields:
+            disp = np.zeros((npoints_temp, ntimesteps, 3))
             dset_disp = grp.create_dataset("displacement",
                                            (npoints, ntimesteps, 3),
                                            chunks=chunks_vect,
                                            compression="gzip",
                                            compression_opts=compression)
         if "strain" in dumpfields:
+            strn = np.zeros((npoints_temp, ntimesteps, 6))
             dset_strn = grp.create_dataset("strain", (npoints, ntimesteps, 6),
                                            chunks=chunks_tens,
                                            compression="gzip",
                                            compression_opts=compression)
         if "traction" in dumpfields:
+            trac = np.zeros((npoints_temp, ntimesteps, 3))
             dset_trac = grp.create_dataset("traction", (npoints, ntimesteps, 3),
                                            chunks=chunks_vect,
                                            compression="gzip",
@@ -199,24 +206,28 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
         grp.createDimension("tensor", 6)
 
         if "velocity" in dumpfields:
+            vel = np.zeros((npoints_temp, ntimesteps, 3))
             dset_vel = grp.createVariable("velocity", np.float64,
                                           ("points", "timesteps", "vector"),
                                           chunksizes=chunks_vect,
                                           zlib=True,
                                           complevel=compression)
         if "displacement" in dumpfields:
+            disp = np.zeros((npoints_temp, ntimesteps, 3))
             dset_disp = grp.createVariable("displacement", np.float64,
                                            ("points", "timesteps", "vector"),
                                            chunksizes=chunks_vect,
                                            zlib=True,
                                            complevel=compression)
         if "strain" in dumpfields:
+            strn = np.zeros((npoints_temp, ntimesteps, 6))
             dset_strn = grp.createVariable("strain", np.float64,
                                            ("points", "timesteps", "tensor"),
                                            chunksizes=chunks_tens,
                                            zlib=True,
                                            complevel=compression)
         if "traction" in dumpfields:
+            trac = np.zeros((npoints_temp, ntimesteps, 3))
             dset_trac = grp.createVariable("traction", np.float64,
                                            ("points", "timesteps", "vector"),
                                            chunksizes=chunks_vect,
@@ -224,17 +235,35 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                                            complevel=compression)
 
     for i in np.arange(npoints):
+        #j=i
+        
+        if i < npoints_temp:
+            factor = 0
+            j = i
+            diff = 0
+        elif i >= npoints_temp and i < 2 * npoints_temp:
+            factor = 1
+            j = i - factor * npoints_temp
+            diff = 0
+        elif i >= 2 * npoints_temp and i < 3 * npoints_temp:
+            factor = 2
+            j = i - factor * npoints_temp
+            diff = (npoints_temp * 4) - npoints
+            npoints_temp = npoints_temp - diff
+        else:
+            factor = 3
+            j = i - factor * (npoints_temp + diff)
+        
         data = database.get_data_hybrid(source, receivers[i], dumpfields,
                                         remove_source_shift=remove_source_shift,
                                         reconvolve_stf=reconvolve_stf, dt=dt,
                                         filter_freqs=filter_freqs)
-
         if "velocity" in dumpfields:
-            dset_vel[i, :, :] = data["velocity"]
+            vel[j, :, :] = data["velocity"]
         if "displacement" in dumpfields:
-            dset_disp[i, :, :] = data["displacement"]
+            disp[j, :, :] = data["displacement"]
         if "strain" in dumpfields:
-            dset_strn[i, :, :] = data["strain"]
+            strn[j, :, :] = data["strain"]
         if "traction" in dumpfields:
             strain = data["strain"]
             e_tt = np.array(strain[:, 0])
@@ -299,10 +328,33 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                              n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
                              n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt +
                                      c_23 * e_pp + c_33 * e_rr)
+            trac[j, :, :] = traction
 
-            dset_trac[i, :, :] = traction
-
-    f_out.close()  # OK for netcdf too
+        if j == (npoints_temp + diff - 1):
+            if "velocity" in dumpfields:
+                dset_vel[factor*npoints_temp:i+1, :, :] = vel
+                vel = np.zeros((npoints_temp, ntimesteps, 3))
+            if "displacement" in dumpfields:
+                dset_disp[factor*npoints_temp:i+1, :, :] = disp
+                disp = np.zeros((npoints_temp, ntimesteps, 3))
+            if "strain" in dumpfields:
+                dset_strn[factor*npoints_temp:i+1, :, :] = strn
+                strn = np.zeros((npoints_temp, ntimesteps, 6))
+            if "traction" in dumpfields:
+                dset_trac[factor*npoints_temp:i+1, :, :] = trac
+                trac = np.zeros((npoints_temp, ntimesteps, 3))
+    
+    """
+    if "velocity" in dumpfields:
+        dset_vel[:, :, :] = vel
+    if "displacement" in dumpfields:
+        dset_disp[:, :, :] = disp
+    if "strain" in dumpfields:
+        dset_strn[:, :, :] = strn
+    if "traction" in dumpfields:
+        dset_trac[:, :, :] = trac
+    """
+    f_out.close()
 
 
 def _make_receivers_from_spherical(inputfile):
@@ -335,7 +387,7 @@ def _make_receivers_from_spherical(inputfile):
                 depth_in_m=dep))
         f.close()
     else:
-        raise NotImplementedError('Provide input as txt, hdf5 or netcdf file.')
+        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
 
     return receivers
 
