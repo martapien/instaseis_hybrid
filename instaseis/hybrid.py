@@ -15,11 +15,11 @@ from __future__ import (absolute_import, division, print_function,
 import numpy as np
 import h5py
 import netCDF4
-from math import ceil 
 
 from . import rotations
 from .source import Receiver
 from .helpers import c_ijkl_ani
+from math import floor
 
 
 def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
@@ -27,27 +27,28 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                            reconvolve_stf=False,
                            filter_freqs=None,
                            dumpfields=("velocity", "strain"),
+                           dumpcoords="spherical",
                            chunking="points", compression=4,
                            fileformat="hdf5"):
     """
-    A method to generate the hdf5/netcdf file with the input (background, 
-    injected) field for a local hybrid simulation. Dumps displacements, 
+    A method to generate the hdf5/netcdf file with the input (background,
+    injected) field for a local hybrid simulation. Dumps displacements,
     velocities, strains or tractions.
 
-    :param outputfile: A path to the output hdf5/netcdf file that is 
+    :param outputfile: A path to the output hdf5/netcdf file that is
         created, e.g. "/home/user/hybrid_output.hdf5". The output file includes
-        group 'spherical' with datasets corrseponding to dumpfields, 
+        group 'spherical' with datasets corrseponding to dumpfields,
         e.g. (by default):
         ['spherical/velocity'] and ['spherical/strain']
     :type outputfile: string
     :param inputfile: A path to a text or hdf5/netcdf file with spherical/local
         coordinates of points on the boundary of the local domain of the hybrid
         method.
-        Hdf5/netcdf file: group spherical with dataset coordinates 
-        ([npoints, 3], where the second dimension is tpr, and with attribute 
-        nb_points defining the total number of gll boundary points. If 
-        coordinates are in the local frame of reference, dataset spherical 
-        requires an attribute rotation_matrix for right-multiplication to 
+        Hdf5/netcdf file: group spherical with dataset coordinates
+        ([npoints, 3], where the second dimension is tpr, and with attribute
+        nb_points defining the total number of gll boundary points. If
+        coordinates are in the local frame of reference, dataset spherical
+        requires an attribute rotation_matrix for right-multiplication to
         rotate to tpr.
     :type inputfile: string
     :param source: The source of the hybrid simulation.
@@ -55,9 +56,9 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     :param database: A forward Instaseis database to extract fields on the
         boundary of the local hybrid domain.
     :type database: :class: '~instaseis.InstaseisDB' object
-    :param dt: Desired sampling rate of the dumped fields. Resampling is 
-        done using a Lanczos kernel. If None, defaults to the dt of the 
-        daatbase. 
+    :param dt: Desired sampling rate of the dumped fields. Resampling is
+        done using a Lanczos kernel. If None, defaults to the dt of the
+        daatbase.
     :type dt: float, optional
     :param remove_source_shift: Cut all samples before the peak of the
             source time function. This has the effect that the first sample
@@ -65,29 +66,36 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     :type remove_source_shift: bool, optional
     :param reconvolve_stf: Deconvolve the source time function used in
             the AxiSEM run and convolve with the STF attached to the source.
-            For this to be stable, the new STF needs to bandlimited. 
+            For this to be stable, the new STF needs to bandlimited.
             Defaults to False.
     :type reconvolve_stf: bool, optional
-    :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter 
-            AxiSEM data. Defaults to None. 
+    :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter
+            AxiSEM data. Defaults to None.
     :type filter_freqs: tuple, optional
-     :param dumpfields: Which fields to dump. Must be a tuple
-            containing any combination of ``"displacement"``, ``"velocity"``, 
-            ``"strain"``, and ``"traction"``. Defaults to ``"velocity"`` and 
+    :param dumpfields: Which fields to dump. Must be a tuple
+            containing any combination of ``"displacement"``, ``"velocity"``,
+            ``"strain"``, and ``"traction"``. Defaults to ``"velocity"`` and
             ``"traction"``.
     :type dumpfields: tuple of string, optional
-    :param chunking: Flag to define the hdf5 chunking scheme. Possible 
-        options are "points" (the fast read is a single time step for all 
-        points on the boundary) and "times" (the fast read is an entire 
+    :param dumpcoords: Which coordinate system do we dump in. Local (
+    cartesian) or global spherical (tpr). Possible options "local" or
+    "spherical", defaults to "spherical".
+    :type dumpcoords: string, optional
+    :param chunking: Flag to define the hdf5 chunking scheme. Possible
+        options are "points" (the fast read is a single time step for all
+        points on the boundary) and "times" (the fast read is an entire
         time series for a single point on the boundary). Defaults to "points".
     :type chunking: string, optional
-    :param compression: Compression level of gzip for hdf5/netcdf. 
+    :param compression: Compression level of gzip for hdf5/netcdf.
         May be an integer from 0 to 9, default is 4.
     :type compression: integer, optional
     :param fileformat: Format of the output file. Possible formats "hdf5" or
         "netcdf". Defaults to "hdf5".
     :type fileformat: string, optional
     """
+
+    precision = 'f4'
+    max_data_in_bytes = 2048 * 2 * 1024 ** 2
 
     if database.info.is_reciprocal:
         raise ValueError('Extraction of background wavefield requires a '
@@ -106,10 +114,16 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     else:
         raise NotImplementedError("Only hdf5 and netcdf outputs allowed.")
 
+    if dumpcoords != "spherical" and dumpcoords != "local":
+        raise NotImplementedError("Can dump only in tpr (spherical) or xyz ("
+                                  "(local) coordinates")
+
     if "spherical" in f_in:
         receivers = _make_receivers_from_spherical(inputfile)
+        # rotmat = f_in['spherical'].attrs['rotmat_xyz_glob_to_loc']
     elif "local" in f_in:
         receivers = _make_receivers_from_local(inputfile)
+        rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
@@ -121,11 +135,10 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
 
     if "traction" in dumpfields:
         if "spherical" in f_in:
-            normals = f_in['spherical/normals'][:, :]  # review in tpr
+            normals = f_in['spherical/normals'][:, :]  # in tpr
         elif "local" in f_in:
             normals = f_in['local/normals'][:, :]
-            rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
-            normals = np.dot(normals, rotmat)
+            # ToDo normals =
         mu_all = f_in['elastic_params/mu']
         lbd_all = f_in['elastic_params/lambda']
         xi_all = f_in['elastic_params/xi']
@@ -135,8 +148,21 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     npoints = len(receivers)
     ntimesteps = _get_ntimesteps(database, source, receivers[0], dt,
                                  filter_freqs, remove_source_shift)
-    npoints_temp = ceil(npoints/4.0)
-    #npoints_temp = npoints
+
+    ncomp = len(dumpfields) * 3
+    if "strain" in dumpfields:
+        ncomp += 3
+
+    if precision == 'f4':
+        npoints_buffer = int(floor(((max_data_in_bytes / 4) / ncomp) /
+                                   ntimesteps))
+    else:
+        npoints_buffer = int(floor(((max_data_in_bytes / 8) / ncomp) /
+                                   ntimesteps))
+
+    if npoints < npoints_buffer:
+        npoints_buffer = npoints
+
     if fileformat == "hdf5":
         if chunking == "points":
             chunks_vect = (npoints, 1, 3)
@@ -156,28 +182,32 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             grp.attrs['dt'] = database.info.dt
 
         if "velocity" in dumpfields:
-            vel = np.zeros((npoints_temp, ntimesteps, 3))
+            vel = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
             dset_vel = grp.create_dataset("velocity", (npoints, ntimesteps, 3),
+                                          dtype=precision,
                                           chunks=chunks_vect,
                                           compression="gzip",
                                           compression_opts=compression)
 
         if "displacement" in dumpfields:
-            disp = np.zeros((npoints_temp, ntimesteps, 3))
+            disp = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
             dset_disp = grp.create_dataset("displacement",
                                            (npoints, ntimesteps, 3),
+                                           dtype=precision,
                                            chunks=chunks_vect,
                                            compression="gzip",
                                            compression_opts=compression)
         if "strain" in dumpfields:
-            strn = np.zeros((npoints_temp, ntimesteps, 6))
+            strn = np.zeros((npoints_buffer, ntimesteps, 6), dtype=precision)
             dset_strn = grp.create_dataset("strain", (npoints, ntimesteps, 6),
+                                           dtype=precision,
                                            chunks=chunks_tens,
                                            compression="gzip",
                                            compression_opts=compression)
         if "traction" in dumpfields:
-            trac = np.zeros((npoints_temp, ntimesteps, 3))
+            trac = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
             dset_trac = grp.create_dataset("traction", (npoints, ntimesteps, 3),
+                                           dtype=precision,
                                            chunks=chunks_vect,
                                            compression="gzip",
                                            compression_opts=compression)
@@ -206,64 +236,67 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
         grp.createDimension("tensor", 6)
 
         if "velocity" in dumpfields:
-            vel = np.zeros((npoints_temp, ntimesteps, 3))
-            dset_vel = grp.createVariable("velocity", np.float64,
+            vel = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
+            dset_vel = grp.createVariable("velocity", precision,
                                           ("points", "timesteps", "vector"),
                                           chunksizes=chunks_vect,
                                           zlib=True,
                                           complevel=compression)
         if "displacement" in dumpfields:
-            disp = np.zeros((npoints_temp, ntimesteps, 3))
-            dset_disp = grp.createVariable("displacement", np.float64,
+            disp = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
+            dset_disp = grp.createVariable("displacement", precision,
                                            ("points", "timesteps", "vector"),
                                            chunksizes=chunks_vect,
                                            zlib=True,
                                            complevel=compression)
         if "strain" in dumpfields:
-            strn = np.zeros((npoints_temp, ntimesteps, 6))
-            dset_strn = grp.createVariable("strain", np.float64,
+            strn = np.zeros((npoints_buffer, ntimesteps, 6), dtype=precision)
+            dset_strn = grp.createVariable("strain", precision,
                                            ("points", "timesteps", "tensor"),
                                            chunksizes=chunks_tens,
                                            zlib=True,
                                            complevel=compression)
         if "traction" in dumpfields:
-            trac = np.zeros((npoints_temp, ntimesteps, 3))
-            dset_trac = grp.createVariable("traction", np.float64,
+            trac = np.zeros((npoints_buffer, ntimesteps, 3), dtype=precision)
+            dset_trac = grp.createVariable("traction", precision,
                                            ("points", "timesteps", "vector"),
                                            chunksizes=chunks_vect,
                                            zlib=True,
                                            complevel=compression)
 
+    buffer_idx = 0
     for i in np.arange(npoints):
-        #j=i
-        
-        if i < npoints_temp:
-            factor = 0
-            j = i
-            diff = 0
-        elif i >= npoints_temp and i < 2 * npoints_temp:
-            factor = 1
-            j = i - factor * npoints_temp
-            diff = 0
-        elif i >= 2 * npoints_temp and i < 3 * npoints_temp:
-            factor = 2
-            j = i - factor * npoints_temp
-            diff = (npoints_temp * 4) - npoints
-            npoints_temp = npoints_temp - diff
-        else:
-            factor = 3
-            j = i - factor * (npoints_temp + diff)
-        
+        j = i - buffer_idx * npoints_buffer
+
         data = database.get_data_hybrid(source, receivers[i], dumpfields,
                                         remove_source_shift=remove_source_shift,
                                         reconvolve_stf=reconvolve_stf, dt=dt,
                                         filter_freqs=filter_freqs)
+
+        rec_phi = receivers[i].longitude
+        rec_theta = receivers[i].colatitude
+
         if "velocity" in dumpfields:
-            vel[j, :, :] = data["velocity"]
+            if "local" in dumpcoords:
+                data["velocity"] = \
+                    rotations.hybrid_vector_tpr_to_local_cartesian(
+                        data["velocity"], rotmat, rec_phi, rec_theta)
+            vel[j, :, :] = np.array(data["velocity"], dtype=precision)
+
         if "displacement" in dumpfields:
-            disp[j, :, :] = data["displacement"]
+            if "local" in dumpcoords:
+                data["displacement"] = \
+                    rotations.hybrid_vector_tpr_to_local_cartesian(
+                        data["displacement"], rotmat, rec_phi, rec_theta)
+            disp[j, :, :] = np.array(data["displacement"], dtype=precision)
+
         if "strain" in dumpfields:
-            strn[j, :, :] = data["strain"]
+            if "local" in dumpcoords:
+                data["strain"] = \
+                    rotations.hybrid_tensor_tpr_to_local_cartesian(
+                        data["strain"], rotmat, rec_phi, rec_theta)
+            strn[j, :, :] = np.array(data["strain"], dtype=precision)
+
         if "traction" in dumpfields:
             strain = data["strain"]
             e_tt = np.array(strain[:, 0])
@@ -328,38 +361,28 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                              n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
                              n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt +
                                      c_23 * e_pp + c_33 * e_rr)
-            trac[j, :, :] = traction
+            if "local" in dumpcoords:
+                traction = rotations.hybrid_vector_tpr_to_local_cartesian(
+                    traction, rotmat, rec_phi, rec_theta)
+            trac[j, :, :] = np.array(traction, dtype=precision)
 
-        if j == (npoints_temp + diff - 1):
+        if j == (npoints_buffer - 1) or i == (npoints - 1):
             if "velocity" in dumpfields:
-                dset_vel[factor*npoints_temp:i+1, :, :] = vel
-                vel = np.zeros((npoints_temp, ntimesteps, 3))
+                dset_vel[buffer_idx:i+1, :, :] = vel[:j+1, :, :]
             if "displacement" in dumpfields:
-                dset_disp[factor*npoints_temp:i+1, :, :] = disp
-                disp = np.zeros((npoints_temp, ntimesteps, 3))
+                dset_disp[buffer_idx:i+1, :, :] = disp[:j+1, :, :]
             if "strain" in dumpfields:
-                dset_strn[factor*npoints_temp:i+1, :, :] = strn
-                strn = np.zeros((npoints_temp, ntimesteps, 6))
+                dset_strn[buffer_idx:i+1, :, :] = strn[:j+1, :, :]
             if "traction" in dumpfields:
-                dset_trac[factor*npoints_temp:i+1, :, :] = trac
-                trac = np.zeros((npoints_temp, ntimesteps, 3))
-    
-    """
-    if "velocity" in dumpfields:
-        dset_vel[:, :, :] = vel
-    if "displacement" in dumpfields:
-        dset_disp[:, :, :] = disp
-    if "strain" in dumpfields:
-        dset_strn[:, :, :] = strn
-    if "traction" in dumpfields:
-        dset_trac[:, :, :] = trac
-    """
+                dset_trac[buffer_idx:i+1, :, :] = trac[:j+1, :, :]
+            buffer_idx = i + 1
+
     f_out.close()
 
 
 def _make_receivers_from_spherical(inputfile):
     """
-    Method to handle hybrid boundary input (in spherical coordinates) defined 
+    Method to handle hybrid boundary input (in spherical coordinates) defined
     by the mesh of a local solver.
     :param inputfile: path to a text or hdf5/netcdf file with spherical/local
         coordinates of points on the boundary of the local domain of the hybrid
@@ -372,7 +395,7 @@ def _make_receivers_from_spherical(inputfile):
         f = h5py.File(inputfile, 'r')
         if "spherical/coordinates" not in f:
             raise ValueError('spherical/coordinates not found in file')
-        coords = f['spherical/coordinates'][:, :]  # review tpr
+        coords = f['spherical/coordinates'][:, :]  # in tpr
         items = f['spherical'].attrs['nb_points']
         if type(items) is np.ndarray:
             items = items[0]
@@ -394,10 +417,10 @@ def _make_receivers_from_spherical(inputfile):
 
 def _make_receivers_from_local(inputfile):
     """
-    Method to handle hybrid boundary input (in local coordinates) defined 
+    Method to handle hybrid boundary input (in local coordinates) defined
     by the mesh of a local solver.
-    :param inputfile: path to a hdf5/netcdf file with coordinates of points on 
-        the boundary of the local domain of the hybrid method. See more in 
+    :param inputfile: path to a hdf5/netcdf file with coordinates of points on
+        the boundary of the local domain of the hybrid method. See more in
         hybrid_generate_output.
     :type inputfile: str
     """
@@ -416,8 +439,9 @@ def _make_receivers_from_local(inputfile):
     if type(items) is np.ndarray:
         items = items[0]
 
-    # review rotate local into global spherical tpr
-    coords = np.dot(coords, rotmat)
+    # rotate local cartesian into global spherical tpr
+    coords = rotations.hybrid_coord_transform_local_cartesian_to_tpr(coords,
+                                                                     rotmat)
 
     for i in np.arange(items):
         lat = coords[i, 0]
@@ -482,9 +506,10 @@ def _get_ntimesteps(database, source, receiver, dt, filter_freqs,
 class HybridReceiversBoundaryInternalTest(object):
     """
     Instaseis Internal Test is a class to generate a network of receivers
-    (recursive generation of a sphere). Also outputs a hdf5 file with 
-    coordinates. 
+    (recursive generation of a sphere). Also outputs a hdf5 file with
+    coordinates.
     """
+
     def __init__(self, latitude, longitude, depth_in_m, savepath, radius=45000,
                  recursion_level=3):
         self.latitude = float(latitude)
@@ -533,8 +558,8 @@ class HybridReceiversBoundaryInternalTest(object):
                               vertices[:, 2] + z)).reshape((len(vertices),
                                                             -1), order='F')
         centroids = np.hstack((centroids[:, 0] + x, centroids[:, 1] + y,
-                              centroids[:, 2] + z)).reshape((len(centroids),
-                                                            -1), order='F')
+                               centroids[:, 2] + z)).reshape((len(centroids),
+                                                              -1), order='F')
 
         receivers = []
         tpr = np.zeros([centroids.shape[0], 3])
