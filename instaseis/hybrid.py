@@ -19,17 +19,19 @@ import netCDF4
 from . import rotations
 from .source import Receiver
 from .helpers import c_ijkl_ani
-from math import floor
+from math import floor, ceil
 
 
-def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
+def hybrid_generate_output(outputfile, inputfile, source, database, dt,
+                           time_window=None,
                            remove_source_shift=True,
                            reconvolve_stf=False,
                            filter_freqs=None,
                            dumpfields=("velocity", "strain"),
                            dumpcoords="spherical",
                            chunking="points", compression=4,
-                           fileformat="hdf5"):
+                           fileformat="hdf5",
+                           max_data_buffer_in_mb=2048):
     """
     A method to generate the hdf5/netcdf file with the input (background,
     injected) field for a local hybrid simulation. Dumps displacements,
@@ -95,7 +97,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
     """
 
     precision = 'f4'
-    max_data_in_bytes = 2048 * 2 * 1024 ** 2
+    max_data_in_bytes = max_data_buffer_in_mb * 1024 ** 2
 
     if database.info.is_reciprocal:
         raise ValueError('Extraction of background wavefield requires a '
@@ -146,8 +148,16 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
         eta_all = f_in['elastic_params/eta']
 
     npoints = len(receivers)
-    ntimesteps = _get_ntimesteps(database, source, receivers[0], dt,
-                                 filter_freqs, remove_source_shift)
+    if time_window is not None:  # review maybe an error instead that dt
+        # doesn't divide the number of steps requested?
+        itmin = int(floor(time_window[0] / dt))
+        itmax = int(ceil(time_window[1] / dt))
+        ntimesteps = itmax - itmin
+    else:
+        ntimesteps = _get_ntimesteps(database, source, receivers[0], dt,
+                                     filter_freqs, remove_source_shift)
+        itmin=0
+        itmax = ntimesteps
 
     ncomp = len(dumpfields) * 3
     if "strain" in dumpfields:
@@ -281,21 +291,24 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
                 data["velocity"] = \
                     rotations.hybrid_vector_tpr_to_local_cartesian(
                         data["velocity"], rotmat, rec_phi, rec_theta)
-            vel[j, :, :] = np.array(data["velocity"], dtype=precision)
+            vel[j, :, :] = np.array(data["velocity"][itmin:itmax, :],
+                                    dtype=precision)
 
         if "displacement" in dumpfields:
             if "local" in dumpcoords:
                 data["displacement"] = \
                     rotations.hybrid_vector_tpr_to_local_cartesian(
                         data["displacement"], rotmat, rec_phi, rec_theta)
-            disp[j, :, :] = np.array(data["displacement"], dtype=precision)
+            disp[j, :, :] = np.array(data["displacement"][itmin:itmax, :],
+                                     dtype=precision)
 
         if "strain" in dumpfields:
             if "local" in dumpcoords:
                 data["strain"] = \
                     rotations.hybrid_tensor_tpr_to_local_cartesian(
                         data["strain"], rotmat, rec_phi, rec_theta)
-            strn[j, :, :] = np.array(data["strain"], dtype=precision)
+            strn[j, :, :] = np.array(data["strain"][itmin:itmax, :],
+                                     dtype=precision)
 
         if "traction" in dumpfields:
             strain = data["strain"]
@@ -364,7 +377,7 @@ def hybrid_generate_output(outputfile, inputfile, source, database, dt=None,
             if "local" in dumpcoords:
                 traction = rotations.hybrid_vector_tpr_to_local_cartesian(
                     traction, rotmat, rec_phi, rec_theta)
-            trac[j, :, :] = np.array(traction, dtype=precision)
+            trac[j, :, :] = np.array(traction[itmin:itmax, :], dtype=precision)
 
         if j == (npoints_buffer - 1) or i == (npoints - 1):
             if "velocity" in dumpfields:
