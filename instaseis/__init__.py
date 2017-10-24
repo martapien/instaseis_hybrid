@@ -101,4 +101,5 @@ if __version__.startswith("0.0.0-tar/zipball"):  # pragma: no cover
 
 # NoQa
 from .source import Source, Receiver, ForceSource, FiniteSource, HybridSources
-from .hybrid import hybrid_generate_output
+from .hybrid import hybrid_generate_output, hybrid_prepare_inputs, \
+    hybrid_prepare_outfile
