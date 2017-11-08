@@ -27,7 +27,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
     """
     Forward Instaseis database.
     """
-    def __init__(self, db_path, netcdf_files, buffer_size_in_mb=100,
+    def __init__(self, db_path, netcdf_files, buffer_size_in_mb=500,
                  read_on_demand=False, *args, **kwargs):
         """
         :param db_path: Path to the Instaseis Database containing
@@ -78,7 +78,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
         self._is_reciprocal = False
 
     def _get_data(self, source, receiver, components, coordinates,
-                  element_info):
+                  element_info, coords_rotmat):
         ei = element_info
         # Collect data arrays and mu in a dictionary.
         data = {}
@@ -257,6 +257,11 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                         rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
                         final_strain[i, :], receiver.longitude_rad,
                         receiver.colatitude_rad)
+                    if "local" in components:
+                        final_strain[i, :] = \
+                            rotations.hybrid_tensor_tpr_to_local_cartesian(
+                                final_strain[i, :], coords_rotmat,
+                                receiver.longitude, receiver.colatitude)
 
                 strain = {}
                 strain['t'] = final_strain[:, 0]
@@ -272,6 +277,10 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final.T, coordinates.phi, source.longitude_rad,
                 source.colatitude_rad, receiver.longitude_rad,
                 receiver.colatitude_rad).T
+            if "local" in components:
+                final_disp = rotations.hybrid_vector_tpr_to_local_cartesian(
+                    final_disp, coords_rotmat, receiver.longitude,
+                        receiver.colatitude)
 
             displacement = {}
             displacement['t'] = final_disp[:, 0]

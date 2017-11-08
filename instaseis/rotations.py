@@ -14,6 +14,7 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import numpy as np
+from math import atan2, acos
 
 
 def rotate_frame_rd(x, y, z, phi, theta):
@@ -270,3 +271,110 @@ def coord_transform_xyz_to_lat_lon_depth(x, y, z, planet_radius=6371e3):
     depth_in_m = planet_radius - r
 
     return latitude, longitude, depth_in_m
+
+
+def hybrid_coord_transform_local_cartesian_to_tpr(v, rot_mat):
+    # rot_mat: xyz_local_to_xyz_global
+    # local cartesian -> global xyz
+    xyz = np.dot(v, rot_mat.T)
+    # global xyz -> tpr
+    spherical = np.zeros(xyz.shape)
+    for i in np.arange(xyz.shape[0]):
+        r = (xyz[i, 0] ** 2 + xyz[i, 1] ** 2 + xyz[i, 2] ** 2) ** 0.5
+        p = atan2(xyz[i, 1], xyz[i, 0])  # longitude
+        t = acos(xyz[i, 2] / r)       # colatitude
+        spherical[i, :] = np.array([np.rad2deg(t), np.rad2deg(p), r])
+        # tpr, r in metres
+    return spherical
+
+
+def hybrid_coord_transform_tpr_to_local_cartesian(v, rot_mat):
+    # rot_mat : xyz_global_to_xyz_local
+    # tpr -> global xyz
+    xyz = np.zeros(v.shape)
+    for i in np.arange(v.shape[0]):
+        v0 = np.deg2rad(v[i, 0])
+        v1 = np.deg2rad(v[i, 1])
+        v2 = v[i, 2]
+
+        xyz[i, 0] = v2 * np.sin(v0) * np.cos(v1)
+        xyz[i, 1] = v2 * np.sin(v0) * np.sin(v1)
+        xyz[i, 2] = v2 * np.cos(v0)
+    # global xyz -> local cartesian
+    xyz_loc = np.dot(xyz, rot_mat.T)
+
+    return xyz_loc
+
+
+def hybrid_vector_local_cartesian_to_tpr(v, rot_mat, phi, theta):
+
+    # rot_mat: xyz_local_to_xyz_global
+    theta = np.deg2rad(theta)
+    phi = np.deg2rad(phi)
+    # local cartesian -> global xyz
+    xyz = np.dot(v, rot_mat.T)
+    # global xyz -> tpr
+    rot_mat_global_to_tpr = xyz_global_to_tpr(phi, theta)
+    spherical = np.dot(xyz, rot_mat_global_to_tpr.T)
+
+    return spherical
+
+
+def hybrid_vector_tpr_to_local_cartesian(v, rot_mat, phi, theta):
+    # rot_mat : xyz_global_to_xyz_local
+    theta = np.deg2rad(theta)
+    phi = np.deg2rad(phi)
+    rot_mat_tpr_to_global = tpr_to_xyz_global(phi, theta)
+    xyz = np.dot(v, rot_mat_tpr_to_global.T)
+    xyz_loc = np.dot(xyz, rot_mat.T)
+    return xyz_loc
+
+
+def hybrid_tensor_tpr_to_local_cartesian(t, rot_mat, phi, theta):
+    A = np.array([[t[0], t[5], t[4]],
+                  [t[5], t[1], t[3]],
+                  [t[4], t[3], t[2]]])
+    # tpr -> global xyz
+    theta = np.deg2rad(theta)
+    phi = np.deg2rad(phi)
+    rot_mat_tpr_to_global = tpr_to_xyz_global(phi, theta)
+    mat_tpr_to_loc = np.dot(rot_mat, rot_mat_tpr_to_global)
+    B = np.dot(np.dot(mat_tpr_to_loc, A), mat_tpr_to_loc.T)
+
+    return np.require(np.array(
+            [B[0, 0], B[1, 1], B[2, 2], B[1, 2], B[0, 2], B[0, 1]]),
+            dtype=np.float64) # xyz_loc
+
+
+def tpr_to_xyz_global(phi, theta):
+
+    theta = np.deg2rad(theta)
+    phi = np.deg2rad(phi)
+
+    ct = np.cos(theta)
+    cp = np.cos(phi)
+    st = np.sin(theta)
+    sp = np.sin(phi)
+
+    rot_mat = np.array([[ct * cp, -sp, st * cp],
+                        [ct * sp, cp, st * sp],
+                        [-st, 0, ct]])
+
+    return rot_mat
+
+
+def xyz_global_to_tpr(phi, theta):
+
+    theta = np.deg2rad(theta)
+    phi = np.deg2rad(phi)
+
+    ct = np.cos(theta)
+    cp = np.cos(phi)
+    st = np.sin(theta)
+    sp = np.sin(phi)
+
+    rot_mat = np.array([[ct * cp, -sp, st * cp],
+                        [ct * sp, cp, st * sp],
+                        [-st, 0, ct]])
+
+    return rot_mat.T

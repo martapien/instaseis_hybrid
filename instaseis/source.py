@@ -1609,53 +1609,70 @@ class HybridSources(object):
     def _create_pointsources(self, fieldsfile, coordsfile, filter_freqs=None):
         """generate point sources from local simulation fields"""
 
-        # review add local coordinate system + rotation matrix
-
         f_fields = h5py.File(fieldsfile, "r")
         f_coords = h5py.File(coordsfile, "r")
 
-        fields_npoints = f_fields['spherical'].attrs['nb_points']
-        coords_npoints = f_coords['spherical'].attrs['nb_points']
+        if "spherical" in f_fields:
+            grp_fields = f_fields['spherical']
+            grp_coords = f_coords['spherical']
+        if "local" in f_fields:
+            grp_fields = f_fields['local']
+            grp_coords = f_coords['local']
+            rotmat = grp_coords.attrs['rotmat_xyz_loc_to_glob']
 
+        fields_npoints = grp_fields.attrs['nb_points']
+        coords_npoints = grp_coords.attrs['nb_points']
         if coords_npoints != fields_npoints:
             raise ValueError("The number of points in the fieldsfile and in "
                              "coordsfile must be the same.")
+        else:
+            npoints = fields_npoints
 
-        normals = f_coords['spherical/normals']
-        weights = f_coords['spherical/weights']
-        tpr = f_coords['spherical/coordinates']
+        tpr = grp_coords['coordinates']
+        normals = grp_coords['normals']
+        weights = grp_coords['weights']
+        dt = grp_fields.attrs['dt']
+
+        if "local" in f_fields:
+            #ToDo this is wrong?? normals =
+            # rotations.hybrid_vector_local_cartesian_to_tpr(
+            # normals, rotmat)
+            tpr = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
+                tpr, rotmat)
+
         mu_all = f_coords['elastic_params/mu']
         lbd_all = f_coords['elastic_params/lambda']
         xi_all = f_coords['elastic_params/xi']
         phi_all = f_coords['elastic_params/phi']
         eta_all = f_coords['elastic_params/eta']
 
-        dt = f_fields['spherical'].attrs['dt']
-
         # When extracting from hdf5, dt is a float. When extracting from
         # netcdf, dt is a numpy array of length 1.
         if type(dt) is np.ndarray:
             dt = dt[0]
 
-        displ_all = f_fields['spherical/displacement']
+        displ_all = grp_fields['displacement']
         traction_all = None
         strain_all = None
-        if 'spherical/traction' in f_fields:
-            traction_all = f_fields['spherical/traction']
-        elif 'spherical/strain' in f_fields:
-            strain_all = f_fields['spherical/strain']
+        if 'traction' in grp_fields:
+            traction_all = grp_fields['traction']
+        elif 'strain' in grp_fields:
+            strain_all = grp_fields['strain']
         else:
             ValueError("Need strains or tractions to repropagate field via "
                        "hybrid sources.")
         pointsources = []
-
-        for i in np.arange(fields_npoints):
+        for i in np.arange(npoints):
             n = normals[i, :]
             w = weights[i]
             latitude = 90.0 - tpr[i, 0]
             longitude = tpr[i, 1]
             depth_in_m = 6371000.0 - tpr[i, 2]
             displ = displ_all[i, :, :]
+
+            if "local" in f_fields:
+                displ = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    displ, rotmat, tpr[i, 1], tpr[i, 0])
 
             mu = mu_all[i]
             lbd = lbd_all[i]
@@ -1752,9 +1769,13 @@ class HybridSources(object):
             # recall voigt in tpr: Ett Epp Err Erp Ert Etp
             if traction_all is not None:
                 traction = traction_all[i, :, :]
+                if "local" in f_fields:
+                    traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                        traction, rotmat, tpr[i, 1], tpr[i, 0])
                 t0 = np.array(traction[:, 0])  # theta
                 t1 = np.array(traction[:, 1])  # phi
                 t2 = np.array(traction[:, 2])  # r
+
             else:
                 strain = strain_all[i, :, :]
                 e_tt = np.array(strain[:, 0])
@@ -1780,6 +1801,8 @@ class HybridSources(object):
                      n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
                      n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
                              c_33 * e_rr)
+            # TODO how do we rotate this traction into tpr if it's local??
+            # TODO do all the c_ij work for local xyz too? I think so?
 
             if filter_freqs is not None:
                 t0 = bandpass(t0, freqmin=filter_freqs[0],

@@ -31,7 +31,8 @@ import scipy.signal
 
 from ..source import Source, ForceSource, Receiver
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq
-
+from ..rotations import hybrid_vector_tpr_to_local_cartesian, \
+    hybrid_tensor_tpr_to_local_cartesian
 
 DEFAULT_MU = 32e9
 
@@ -714,6 +715,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         self._get_elastic_params(source, receivers, outfile)
 
     def get_data_hybrid(self, source, receiver, dumpfields,
+                        dumpcoords="spherical", coords_rotmat=None,
                         remove_source_shift=True,
                         reconvolve_stf=False, filter_freqs=None, dt=None,
                         kernelwidth=12):
@@ -764,13 +766,18 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             raise NotImplementedError("Need a forward Instaseis database for "
                                       "hybrid data extraction.")
 
+        components = ("hybrid",)
         if "strain" in dumpfields or "traction" in dumpfields:
-            components = ("hybrid", "strain")
-        else:
-            components = ("hybrid")
+            components += ("strain",)
+        if "local" in dumpcoords:
+            components += ("strain",)
+
+        if "local" in dumpcoords and coords_rotmat is None:
+            raise ValueError("Need the rotation matrix to output local "
+                             "coordinates.")
 
         data = self._get_data_hybrid(source, receiver, dt, dumpfields,
-                                     filter_freqs, components)
+                                     filter_freqs, components, coords_rotmat)
         # data comes out in tpr
 
         if reconvolve_stf and remove_source_shift:
@@ -789,6 +796,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         if "displacement" in dumpfields or "velocity" in dumpfields:
             displ = data["displacement"]
+
             vel = {}
             for comp in displ.keys():
                 # 1. reconvolve stf
@@ -864,6 +872,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         if "strain" in dumpfields or "traction" in dumpfields:
             strain = data["strain"]
+
             for comp in strain.keys():
                 # 1. reconvolve stf
                 if reconvolve_stf:
@@ -955,7 +964,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
     @abstractmethod
     def _get_data_hybrid(self, source, receiver, dt, dumpfields,
-                         filter_freqs, components):
+                         filter_freqs, components, coords_rotmat):
         raise NotImplementedError
 
     @abstractmethod

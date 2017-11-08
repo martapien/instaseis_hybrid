@@ -631,7 +631,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         raise NotImplementedError
 
     def _get_data_hybrid(self, source, receiver, dt, dumpfields,
-                         filter_freqs, components):
+                         filter_freqs, components, coords_rotmat):
         """
         Extract data for hybrid modelling from a netcdf based Instaseis 
         database. Outputs a dictionary with keys being the tpr vector or 
@@ -677,6 +677,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         # ToDo modify _get_data for the merged fwd db
         data = self._get_data(
             source=source, receiver=receiver, components=components,
-            coordinates=coordinates, element_info=element_info)
+            coordinates=coordinates, element_info=element_info,
+            coords_rotmat=coords_rotmat)
 
         return data
