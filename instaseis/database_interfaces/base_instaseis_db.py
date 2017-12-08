@@ -696,7 +696,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             st += tr
         return st
 
-    def get_elastic_params(self, source, receivers, outfile):
+    def get_elastic_params(self, source, receiver):
         """
         Extract elastic parameters mu, lambda, xi, phi, eta 
         from an Instaseis database. Saves extracted data in a hdf5 file.
@@ -712,7 +712,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         """
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
-        self._get_elastic_params(source, receivers, outfile)
+
+        return self._get_elastic_params(source, receiver)
 
     def get_data_hybrid(self, source, receiver, dumpfields,
                         dumpcoords="spherical", coords_rotmat=None,
@@ -767,17 +768,18 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                       "hybrid data extraction.")
 
         components = ("hybrid",)
-        if "strain" in dumpfields or "traction" in dumpfields:
+        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
+                dumpfields:
             components += ("strain",)
         if "local" in dumpcoords:
-            components += ("strain",)
+            components += ("local",)
 
         if "local" in dumpcoords and coords_rotmat is None:
             raise ValueError("Need the rotation matrix to output local "
                              "coordinates.")
 
-        data = self._get_data_hybrid(source, receiver, dt, dumpfields,
-                                     filter_freqs, components, coords_rotmat)
+        data = self._get_data_hybrid(source, receiver, dt, filter_freqs,
+                                     components, coords_rotmat)
         # data comes out in tpr
 
         if reconvolve_stf and remove_source_shift:
@@ -870,7 +872,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                            df=1. / self.info.dt,
                                            corners=4, zerophase=True)
 
-        if "strain" in dumpfields or "traction" in dumpfields:
+        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
+                dumpfields:
             strain = data["strain"]
 
             for comp in strain.keys():
@@ -950,7 +953,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             vel_array[:, 1] = vel['p']
             vel_array[:, 2] = vel['r']
             data["velocity"] = vel_array
-        if "strain" in dumpfields or "traction" in dumpfields:
+        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
+                dumpfields:
             strain_array = np.zeros((len(strain['t']), 6))
             strain_array[:, 0] = strain['t']
             strain_array[:, 1] = strain['p']
@@ -963,8 +967,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         return data
 
     @abstractmethod
-    def _get_data_hybrid(self, source, receiver, dt, dumpfields,
-                         filter_freqs, components, coords_rotmat):
+    def _get_data_hybrid(self, source, receiver, dt, filter_freqs,
+                         components, coords_rotmat):
         raise NotImplementedError
 
     @abstractmethod

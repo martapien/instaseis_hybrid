@@ -78,7 +78,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
         self._is_reciprocal = False
 
     def _get_data(self, source, receiver, components, coordinates,
-                  element_info, coords_rotmat):
+                  element_info, coords_rotmat=None):
         ei = element_info
         # Collect data arrays and mu in a dictionary.
         data = {}
@@ -273,6 +273,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 data["strain"] = strain
 
             # rotate final_displ to tpr
+            """
             final_disp = rotations.rotate_vector_src_to_tpr(
                 final.T, coordinates.phi, source.longitude_rad,
                 source.colatitude_rad, receiver.longitude_rad,
@@ -281,6 +282,17 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_disp = rotations.hybrid_vector_tpr_to_local_cartesian(
                     final_disp, coords_rotmat, receiver.longitude,
                         receiver.colatitude)
+
+            """
+            if "local" in components:
+                final_disp = rotations.hybrid_vector_src_to_local_cartesian(
+                    final.T, coords_rotmat, coordinates.phi,
+                    source.longitude_rad, source.colatitude_rad).T
+            else:
+                final_disp = rotations.rotate_vector_src_to_tpr(
+                    final.T, coordinates.phi, source.longitude_rad,
+                    source.colatitude_rad, receiver.longitude_rad,
+                    receiver.colatitude_rad).T
 
             displacement = {}
             displacement['t'] = final_disp[:, 0]

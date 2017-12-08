@@ -74,6 +74,15 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
         elastic_params["xi_all"] = f_in['elastic_params/xi'][:]
         elastic_params["phi_all"] = f_in['elastic_params/phi'][:]
         elastic_params["eta_all"] = f_in['elastic_params/eta'][:]
+    elif "stress" in dumpfields:
+        #elastic_params = {}
+        #elastic_params["mu_all"] = f_in['elastic_params/mu'][:]
+        #elastic_params["lbd_all"] = f_in['elastic_params/lambda'][:]
+        #elastic_params["xi_all"] = f_in['elastic_params/xi'][:]
+        #elastic_params["phi_all"] = f_in['elastic_params/phi'][:]
+        #elastic_params["eta_all"] = f_in['elastic_params/eta'][:]
+        normals = None
+        elastic_params = None
     else:
         normals = None
         elastic_params = None
@@ -200,7 +209,9 @@ def hybrid_generate_output(source, inputs, coordinates,
     precision = inputs["precision"]
     if "traction" in dumpfields:
         normals = inputs["normals"]
-        elastic_params = inputs["elastic_params"]
+        #elastic_params = inputs["elastic_params"]
+    #if "stress" in dumpfields:
+        #elastic_params = inputs["elastic_params"]
     npoints = inputs["npoints"]
     itmax = inputs["itmax"]
     itmin = inputs["itmin"]
@@ -244,12 +255,16 @@ def hybrid_generate_output(source, inputs, coordinates,
     if "traction" in dumpfields:
         trac = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
         dset_trac = grp_coords["traction"]
+    if "stress" in dumpfields:
+        strss = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
+        dset_strss = grp_coords["stress"]
 
     buf_idx = 0 
     for i in np.arange(npoints_rank):
         j = i - buf_idx * npoints_buf
         if j == 0:
             startTime = datetime.now()
+
         data = database.get_data_hybrid(source, receivers[i], dumpfields,
                                         dumpcoords=dumpcoords,
                                         coords_rotmat=coords_rotmat,
@@ -270,23 +285,22 @@ def hybrid_generate_output(source, inputs, coordinates,
             strn[j, :, :] = np.array(data["strain"][itmin:itmax, :],
                                      dtype=precision)
 
-        if "traction" in dumpfields:
-            strain = data["strain"]
-            e_tt = np.array(strain[itmin:itmax, 0])
-            e_pp = np.array(strain[itmin:itmax, 1])
-            e_rr = np.array(strain[itmin:itmax, 2])
-            e_rp = np.array(strain[itmin:itmax, 3])
-            e_rt = np.array(strain[itmin:itmax, 4])
-            e_tp = np.array(strain[itmin:itmax, 5])
+        if "stress" in dumpfields or "traction" in dumpfields:
+            params = database.get_elastic_params(source, receivers[i])
 
-            n = normals[i, :]
-            traction = np.zeros(ntimesteps, 3)
+            e_tt = np.array(data["strain"][itmin:itmax, 0])
+            e_pp = np.array(data["strain"][itmin:itmax, 1])
+            e_rr = np.array(data["strain"][itmin:itmax, 2])
+            e_rp = np.array(data["strain"][itmin:itmax, 3])
+            e_rt = np.array(data["strain"][itmin:itmax, 4])
+            e_tp = np.array(data["strain"][itmin:itmax, 5])
 
-            mu = elastic_params["mu_all"][i]
-            lbd = elastic_params["lbd_all"][i]
-            xi = elastic_params["xi_all"][i]
-            phi = elastic_params["phi_all"][i]
-            eta = elastic_params["eta_all"][i]
+            mu = params["mu"]
+            lbd = params["lambda"]
+            xi = params["xi"]
+            phi = params["phi"]
+            eta = params["eta"]
+
             # review only transverse isotropy in this case
             fa_ani_thetal = 0.0
             fa_ani_phil = 0.0
@@ -318,24 +332,40 @@ def hybrid_generate_output(source, inputs, coordinates,
             c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                               fa_ani_phil, 0, 1, 0, 1)
 
-            traction[:, 0] = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt +
-                                     c_12 * e_pp + c_13 * e_rr) + \
-                             n[1] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                             n[2] * (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr
-                                     + 2.0 * c_55 * e_rt)
+            if "stress" in dumpfields:
+                stress = np.zeros((ntimesteps, 6))
 
-            traction[:, 1] = n[0] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                             n[1] * (c_12 * e_tt + 2.0 * c_25 * e_rt +
-                                     c_22 * e_pp + c_23 * e_rr) + \
-                             n[2] * 2.0 * (c_46 * e_tp + c_44 * e_rp)
+                stress[:, 0] = (c_11 * e_tt + 2.0 * c_15 * e_rt + c_12 * e_pp
+                                + c_13 * e_rr)
+                stress[:, 1] = (c_12 * e_tt + 2.0 * c_25 * e_rt + c_22 * e_pp
+                                + c_23 * e_rr)
+                stress[:, 2] = (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp
+                                + c_33 * e_rr)
+                stress[:, 3] = 2.0 * (c_66 * e_tp + c_46 * e_rp)
+                stress[:, 4] = (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr + 2.0
+                                * c_55 * e_rt)
+                stress[:, 5] = 2.0 * (c_46 * e_tp + c_44 * e_rp)
 
-            traction[:, 2] = n[0] * (c_15 * e_tt + 2.0 * c_55 * e_rt +
-                                     c_25 * e_pp + c_35 * e_rr) + \
-                             n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
-                             n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt +
-                                     c_23 * e_pp + c_33 * e_rr)
-            trac[j, :, :] = np.array(traction[itmin:itmax, :],
-                                     dtype=precision)
+                strss[j, :, :] = np.array(stress[:, :], dtype=precision)
+
+            if "traction" in dumpfields:
+                n = normals[i, :]
+                traction = np.zeros((ntimesteps, 3))
+                traction[:, 0] = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt +
+                                         c_12 * e_pp + c_13 * e_rr) + \
+                                 n[1] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
+                                 n[2] * (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr
+                                         + 2.0 * c_55 * e_rt)
+                traction[:, 1] = n[0] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
+                                 n[1] * (c_12 * e_tt + 2.0 * c_25 * e_rt +
+                                         c_22 * e_pp + c_23 * e_rr) + \
+                                 n[2] * 2.0 * (c_46 * e_tp + c_44 * e_rp)
+                traction[:, 2] = n[0] * (c_15 * e_tt + 2.0 * c_55 * e_rt +
+                                         c_25 * e_pp + c_35 * e_rr) + \
+                                 n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
+                                 n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt +
+                                         c_23 * e_pp + c_33 * e_rr)
+                trac[j, :, :] = np.array(traction[:, :], dtype=precision)
 
         time_increment2 = datetime.now() - time_increment1
         if j == 0:
@@ -369,6 +399,9 @@ def hybrid_generate_output(source, inputs, coordinates,
             if "traction" in dumpfields:
                 dset_trac[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
                     trac[:j + 1, :, :]
+            if "stress" in dumpfields:
+                dset_strss[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
+                    strss[:j + 1, :, :]
             ttime2 = datetime.now() - startTime2
 
             with open("/disks/marta/HYBRID_tests/InstaseisTest/"
@@ -396,6 +429,10 @@ def _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
     if "strain" in dumpfields:
         grp.create_dataset("strain", (npoints, ntimesteps, 6),
                            dtype=precision)
+    if "stress" in dumpfields:
+        grp.create_dataset("stress", (npoints, ntimesteps, 6),
+                           dtype=precision)
+
     if "traction" in dumpfields:
         grp.create_dataset("traction", (npoints, ntimesteps, 3),
                            dtype=precision)
@@ -436,6 +473,7 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None):
     if coordinates_local:
         if rotmat is None:
             raise ValueError("Need a rotation matrix in local coordinates")
+        coordinates[:, 2] += 6371000.  # radius of the Earth
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
             coordinates, rotmat)
 

@@ -287,7 +287,7 @@ def hybrid_coord_transform_local_cartesian_to_tpr(v, rot_mat):
         # tpr, r in metres
     return spherical
 
-
+"""
 def hybrid_coord_transform_tpr_to_local_cartesian(v, rot_mat):
     # rot_mat : xyz_global_to_xyz_local
     # tpr -> global xyz
@@ -304,13 +304,11 @@ def hybrid_coord_transform_tpr_to_local_cartesian(v, rot_mat):
     xyz_loc = np.dot(xyz, rot_mat.T)
 
     return xyz_loc
-
+"""
 
 def hybrid_vector_local_cartesian_to_tpr(v, rot_mat, phi, theta):
 
     # rot_mat: xyz_local_to_xyz_global
-    theta = np.deg2rad(theta)
-    phi = np.deg2rad(phi)
     # local cartesian -> global xyz
     xyz = np.dot(v, rot_mat.T)
     # global xyz -> tpr
@@ -322,12 +320,18 @@ def hybrid_vector_local_cartesian_to_tpr(v, rot_mat, phi, theta):
 
 def hybrid_vector_tpr_to_local_cartesian(v, rot_mat, phi, theta):
     # rot_mat : xyz_global_to_xyz_local
-    theta = np.deg2rad(theta)
-    phi = np.deg2rad(phi)
     rot_mat_tpr_to_global = tpr_to_xyz_global(phi, theta)
     xyz = np.dot(v, rot_mat_tpr_to_global.T)
     xyz_loc = np.dot(xyz, rot_mat.T)
     return xyz_loc
+
+
+def hybrid_vector_src_to_local_cartesian(v, rot_mat, phi, srclon, srccolat):
+    rotmat = np.eye(3)
+    rotmat = rotate_vector_src_to_xyz(rotmat, phi)
+    rotmat = rotate_vector_xyz_src_to_xyz_earth(rotmat, srclon, srccolat)
+    rotmat = np.dot(rot_mat, rotmat)
+    return np.dot(rotmat, v)
 
 
 def hybrid_tensor_tpr_to_local_cartesian(t, rot_mat, phi, theta):
@@ -335,8 +339,6 @@ def hybrid_tensor_tpr_to_local_cartesian(t, rot_mat, phi, theta):
                   [t[5], t[1], t[3]],
                   [t[4], t[3], t[2]]])
     # tpr -> global xyz
-    theta = np.deg2rad(theta)
-    phi = np.deg2rad(phi)
     rot_mat_tpr_to_global = tpr_to_xyz_global(phi, theta)
     mat_tpr_to_loc = np.dot(rot_mat, rot_mat_tpr_to_global)
     B = np.dot(np.dot(mat_tpr_to_loc, A), mat_tpr_to_loc.T)

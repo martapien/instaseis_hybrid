@@ -546,8 +546,9 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             datetime=self.parsed_mesh.creation_time
         )
 
-    def _get_elastic_params(self, source, receivers, outfile):
-        """
+    """
+    def _get_elastic_params_save(self, source, receivers, outfile):
+        """"""
         Extract elastic parameters mu, lambda, xi, phi, eta 
         from a netcdf based Instaseis database. Saves extracted data in a hdf5 
         file.
@@ -560,7 +561,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         :type outfile: string
         :param outfile: Path to the .hdf5 file where we wish to save the 
             "elastic_params" dataset with mu, lambda, xi, phi, eta 
-        """
+        """"""
         npoints = len(receivers.network[0])
         mu = np.zeros(npoints)
         rho = np.zeros(npoints)
@@ -616,6 +617,40 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
                            compression_opts=compression)
 
         f.close()
+    """
+
+    def _get_elastic_params(self, source, receiver):
+        """
+        Extract elastic parameters mu, lambda, xi, phi, eta 
+        from a netcdf based Instaseis database. Saves extracted data in a hdf5 
+        file.
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: list of :class:`instaseis.source.Receiver`
+        :param receiver: The receivers that define a list of points on which we 
+            wish to extract elastic parameters.
+        :type outfile: string
+        :param outfile: Path to the .hdf5 file where we wish to save the 
+            "elastic_params" dataset with mu, lambda, xi, phi, eta 
+        """
+        if self.info.is_reciprocal:
+            a, b = source, receiver
+        else:
+            a, b = receiver, source
+
+        rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+            a.x(planet_radius=self.info.planet_radius),
+            a.y(planet_radius=self.info.planet_radius),
+            a.z(planet_radius=self.info.planet_radius),
+            b.longitude, b.colatitude)
+
+        coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+        element_info = self._get_element_info(coordinates=coordinates)
+        params = self._get_params(element_info)
+
+        return params
+
 
     @abstractmethod
     def _get_params(self, element_info):
@@ -630,8 +665,8 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         """
         raise NotImplementedError
 
-    def _get_data_hybrid(self, source, receiver, dt, dumpfields,
-                         filter_freqs, components, coords_rotmat):
+    def _get_data_hybrid(self, source, receiver, dt, filter_freqs,
+                         components, coords_rotmat):
         """
         Extract data for hybrid modelling from a netcdf based Instaseis 
         database. Outputs a dictionary with keys being the tpr vector or 

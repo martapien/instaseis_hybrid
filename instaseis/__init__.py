@@ -103,3 +103,4 @@ if __version__.startswith("0.0.0-tar/zipball"):  # pragma: no cover
 from .source import Source, Receiver, ForceSource, FiniteSource, HybridSources
 from .hybrid import hybrid_generate_output, hybrid_prepare_inputs
 from .hybrid_parallel import hybrid_generate_output_parallel
+from .rotations import *
