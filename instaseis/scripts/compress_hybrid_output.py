@@ -19,17 +19,23 @@ __netcdf_version = tuple(int(i) for i in netCDF4.__version__.split("."))
               default="hdf5",
               help="Choose if you wish the output to be a hdf5 or a netcdf "
                    "file")
-@click.option('--chunking', type=click.Choice(["points", "times"]),
+@click.option('--chunking_type', type=click.Choice(["points", "times"]),
               default="times",
               help="Choose chunking type. If you intend to extract entire "
                    "time series per point, choose `times`. If you intend to "
                    "extract a specific time step for all points, choose "
                    "`points`.  Incorrect chunking slows down data access.")
+@click.option('--chunking_size', type=int, default=10,
+              help="Choose chunking size for the defined type. For example, if "
+                   "=1, then data is chunked per single point or time step"
+                   "(depending on selected type). If =10, then ten points or "
+                   "time steps  are going to form a contiguous chunk."
+                   "Incorrect chunking slows down data access.")
 @click.option("--compression_level",
               type=click.IntRange(1, 9), default=4,
               help="Compression level from 1 (fast) to 9 (slow).")
-def compress_output(input_filename, output_filename, output_filetype, chunking,
-                    compression_level):
+def compress_output(input_filename, output_filename, output_filetype,
+                    chunking_type, chunking_size, compression_level):
     """
     Transposes all data in the "/Snapshots" group.
 
@@ -62,13 +68,13 @@ def compress_output(input_filename, output_filename, output_filetype, chunking,
                 shape = dset_in.shape
                 dtype = dset_in.dtype
 
-                if chunking == "points":
-                    chunks = (shape[0], 1, shape[2])
+                if chunking_type == "points":
+                    chunks = (shape[0], chunking_size, shape[2])
                     factor = int((8 * 1024 * 1024 / 4) / shape[0])  # divide by
                     # npoints
                     s = int(ceil(shape[1] / float(factor)))  # nb of 8mb blocks
-                elif chunking == "times":
-                    chunks = (1, shape[1], shape[2])
+                elif chunking_type == "times":
+                    chunks = (chunking_size, shape[1], shape[2])
                     factor = int((8 * 1024 * 1024 / 4) / shape[1])  # divide by
                     # ntimesteps
                     s = int(ceil(shape[0] / float(factor)))  # nb of 8mb blocks
@@ -86,10 +92,10 @@ def compress_output(input_filename, output_filename, output_filetype, chunking,
                 with pbar(range(s), length=s,
                           label="\r ") as idx:
                     for _i in idx:
-                        if chunking == "points":
+                        if chunking_type == "points":
                             _s = slice(_i * factor, _i * factor + factor)
                             dset_out[:, _s, :] = dset_in[:, _s, :]
-                        if chunking == "times":
+                        if chunking_type == "times":
                             _s = slice(_i * factor, _i * factor + factor)
                             dset_out[_s, :, :] = dset_in[_s, :, :]
 
@@ -121,13 +127,13 @@ def compress_output(input_filename, output_filename, output_filetype, chunking,
                 shape = dset_in.shape
                 dtype = dset_in.dtype
 
-                if chunking == "points":
-                    chunks = (shape[0], 1, shape[2])
+                if chunking_type == "points":
+                    chunks = (shape[0], chunking_size, shape[2])
                     factor = int((8 * 1024 * 1024 / 4) / shape[0])  # divide by
                     # npoints
                     s = int(ceil(shape[1] / float(factor)))  # nb of 8mb blocks
-                elif chunking == "times":
-                    chunks = (1, shape[1], shape[2])
+                elif chunking_type == "times":
+                    chunks = (chunking_size, shape[1], shape[2])
                     factor = int((8 * 1024 * 1024 / 4) / shape[1])  # divide by
                     # ntimesteps
                     s = int(ceil(shape[0] / float(factor)))  # nb of 8mb blocks
@@ -145,10 +151,10 @@ def compress_output(input_filename, output_filename, output_filetype, chunking,
                 with pbar(range(s), length=s,
                           label="Writing group `%s` to file" % grp) as idx:
                     for _i in idx:
-                        if chunking == "points":
+                        if chunking_type == "points":
                             _s = slice(_i * factor, _i * factor + factor)
                             dset_out[:, _s, :] = dset[:, _s, :]
-                        if chunking == "times":
+                        if chunking_type == "times":
                             _s = slice(_i * factor, _i * factor + factor)
                             dset_out[_s, :, :] = dset[_s, :, :]
     else:
@@ -157,7 +163,6 @@ def compress_output(input_filename, output_filename, output_filetype, chunking,
 
     f_in.close()
     f_out.close()
-
 
 
 if __name__ == "__main__":
