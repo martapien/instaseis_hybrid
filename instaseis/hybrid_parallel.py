@@ -25,7 +25,8 @@ def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
 
         npoints_rank = int(floor(inputs["npoints"] / nprocs))
         start_idx = 0
-        coordinates = coordinates_send[:npoints_rank]
+        coordinates = np.array(coordinates_send[:npoints_rank],
+                               dtype=np.float32)
         print('Instaseis: Proc %d sending info to other procs...' % rank)
         for i in np.arange(1, nprocs):
             start_idx_send = i * npoints_rank
@@ -52,7 +53,7 @@ def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
         tag3 = rank + 30
         npoints_rank = comm.recv(source=0, tag=tag2)
         start_idx = comm.recv(source=0, tag=tag3)
-        coordinates = np.empty((npoints_rank, 3))
+        coordinates = np.empty((npoints_rank, 3), dtype=np.float32)
         comm.Recv(coordinates, source=0, tag=tag1)
         print('Instaseis: Proc %d received info!' % rank)
         inputs = None

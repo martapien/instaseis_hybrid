@@ -22,7 +22,6 @@ from .source import Source, Receiver
 from .helpers import c_ijkl_ani
 from . import open_db
 
-from datetime import datetime
 from mpi4py import MPI
 
 rank = MPI.COMM_WORLD.Get_rank()
@@ -63,29 +62,13 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
                                   'the 3D solver.')
 
     if "traction" in dumpfields:
-        elastic_params = {}
         if "spherical" in f_in:
             normals = f_in['spherical/normals'][:, :]  # in tpr
         elif "local" in f_in:
             normals = f_in['local/normals'][:, :]
             # ToDo normals =
-        elastic_params["mu_all"] = f_in['elastic_params/mu'][:]
-        elastic_params["lbd_all"] = f_in['elastic_params/lambda'][:]
-        elastic_params["xi_all"] = f_in['elastic_params/xi'][:]
-        elastic_params["phi_all"] = f_in['elastic_params/phi'][:]
-        elastic_params["eta_all"] = f_in['elastic_params/eta'][:]
-    elif "stress" in dumpfields:
-        #elastic_params = {}
-        #elastic_params["mu_all"] = f_in['elastic_params/mu'][:]
-        #elastic_params["lbd_all"] = f_in['elastic_params/lambda'][:]
-        #elastic_params["xi_all"] = f_in['elastic_params/xi'][:]
-        #elastic_params["phi_all"] = f_in['elastic_params/phi'][:]
-        #elastic_params["eta_all"] = f_in['elastic_params/eta'][:]
-        normals = None
-        elastic_params = None
     else:
         normals = None
-        elastic_params = None
 
     npoints = coordinates.shape[0]
 
@@ -108,7 +91,7 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
             dt_hdf5 = dt
 
     ncomp = len(dumpfields) * 3
-    if "strain" in dumpfields:
+    if "strain" or "stress" in dumpfields:
         ncomp += 3
 
     if precision == 'f4':
@@ -129,7 +112,6 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
     inputs["coordinates_local"] = coordinates_local
     inputs["precision"] = precision
     inputs["normals"] = normals
-    inputs["elastic_params"] = elastic_params
     inputs["npoints"] = npoints
     inputs["itmin"] = itmin
     inputs["itmax"] = itmax
@@ -209,9 +191,6 @@ def hybrid_generate_output(source, inputs, coordinates,
     precision = inputs["precision"]
     if "traction" in dumpfields:
         normals = inputs["normals"]
-        #elastic_params = inputs["elastic_params"]
-    #if "stress" in dumpfields:
-        #elastic_params = inputs["elastic_params"]
     npoints = inputs["npoints"]
     itmax = inputs["itmax"]
     itmin = inputs["itmin"]
@@ -230,6 +209,11 @@ def hybrid_generate_output(source, inputs, coordinates,
     if coordinates_local:
         receivers = _make_receivers(coordinates, coordinates_local,
                                     rotmat=coords_rotmat)
+        if dumpcoords == "local":
+            # we transpose it to have loc_to_glob, this rotmat is glob_to_loc
+            coords_rotmat = coords_rotmat.T
+        else:
+            coords_rotmat = None
     else:
         receivers = _make_receivers(coordinates, coordinates_local)
 
@@ -244,26 +228,24 @@ def hybrid_generate_output(source, inputs, coordinates,
 
     grp_coords = f_out[dumpcoords]
     if "velocity" in dumpfields:
-        vel = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
-        dset_vel = grp_coords["velocity"]
+        velocity = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
+        dset_v = grp_coords["velocity"]
     if "displacement" in dumpfields:
         disp = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
-        dset_disp = grp_coords["displacement"]
+        dset_d = grp_coords["displacement"]
     if "strain" in dumpfields:
-        strn = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
+        strain = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
         dset_strn = grp_coords["strain"]
     if "traction" in dumpfields:
-        trac = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
-        dset_trac = grp_coords["traction"]
+        traction = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
+        dset_tr = grp_coords["traction"]
     if "stress" in dumpfields:
-        strss = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
-        dset_strss = grp_coords["stress"]
+        stress = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
+        dset_strs = grp_coords["stress"]
 
     buf_idx = 0 
     for i in np.arange(npoints_rank):
         j = i - buf_idx * npoints_buf
-        if j == 0:
-            startTime = datetime.now()
 
         data = database.get_data_hybrid(source, receivers[i], dumpfields,
                                         dumpcoords=dumpcoords,
@@ -272,9 +254,8 @@ def hybrid_generate_output(source, inputs, coordinates,
                                         reconvolve_stf=reconvolve_stf, dt=dt,
                                         filter_freqs=filter_freqs)
 
-        time_increment1 = datetime.now()
         if "velocity" in dumpfields:
-            vel[j, :, :] = np.array(data["velocity"][itmin:itmax, :],
+            velocity[j, :, :] = np.array(data["velocity"][itmin:itmax, :],
                                     dtype=precision)
 
         if "displacement" in dumpfields:
@@ -282,18 +263,19 @@ def hybrid_generate_output(source, inputs, coordinates,
                                      dtype=precision)
 
         if "strain" in dumpfields:
-            strn[j, :, :] = np.array(data["strain"][itmin:itmax, :],
+            strain[j, :, :] = np.array(data["strain"][itmin:itmax, :],
                                      dtype=precision)
 
-        if "stress" in dumpfields or "traction" in dumpfields:
-            params = database.get_elastic_params(source, receivers[i])
+        if "stress" or "traction" in dumpfields:
+            params = data["elastic_params"]
 
-            e_tt = np.array(data["strain"][itmin:itmax, 0])
-            e_pp = np.array(data["strain"][itmin:itmax, 1])
-            e_rr = np.array(data["strain"][itmin:itmax, 2])
-            e_rp = np.array(data["strain"][itmin:itmax, 3])
-            e_rt = np.array(data["strain"][itmin:itmax, 4])
-            e_tp = np.array(data["strain"][itmin:itmax, 5])
+            # 123 = tpr or 123 = xyz
+            e_11 = np.array(data["strain"][itmin:itmax, 0])
+            e_22 = np.array(data["strain"][itmin:itmax, 1])
+            e_33 = np.array(data["strain"][itmin:itmax, 2])
+            e_32 = np.array(data["strain"][itmin:itmax, 3])
+            e_31 = np.array(data["strain"][itmin:itmax, 4])
+            e_12 = np.array(data["strain"][itmin:itmax, 5])
 
             mu = params["mu"]
             lbd = params["lambda"]
@@ -332,84 +314,90 @@ def hybrid_generate_output(source, inputs, coordinates,
             c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                               fa_ani_phil, 0, 1, 0, 1)
 
+            stress_tmp = np.zeros((ntimesteps, 6))
+
+            stress_tmp[:, 0] = (c_11 * e_11 + 2.0 * c_15 * e_31 + c_12 * e_22
+                                + c_13 * e_33)  # 11
+            stress_tmp[:, 1] = (c_12 * e_11 + 2.0 * c_25 * e_31 + c_22 * e_22
+                                + c_23 * e_33)  # 22
+            stress_tmp[:, 2] = (c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22
+                                + c_33 * e_33)  # 33
+            stress_tmp[:, 3] = 2.0 * (c_46 * e_12 + c_44 * e_32)  # 23
+            stress_tmp[:, 4] = (c_15 * e_11 + c_25 * e_22 + c_35 * e_33 + 2.0
+                                * c_55 * e_31)  # 13
+            stress_tmp[:, 5] = 2.0 * (c_66 * e_12 + c_46 * e_32)  # 12
+
             if "stress" in dumpfields:
-                stress = np.zeros((ntimesteps, 6))
-
-                stress[:, 0] = (c_11 * e_tt + 2.0 * c_15 * e_rt + c_12 * e_pp
-                                + c_13 * e_rr)
-                stress[:, 1] = (c_12 * e_tt + 2.0 * c_25 * e_rt + c_22 * e_pp
-                                + c_23 * e_rr)
-                stress[:, 2] = (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp
-                                + c_33 * e_rr)
-                stress[:, 3] = 2.0 * (c_66 * e_tp + c_46 * e_rp)
-                stress[:, 4] = (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr + 2.0
-                                * c_55 * e_rt)
-                stress[:, 5] = 2.0 * (c_46 * e_tp + c_44 * e_rp)
-
-                strss[j, :, :] = np.array(stress[:, :], dtype=precision)
+                stress[j, :, :] = np.array(stress_tmp[:, :], dtype=precision)
 
             if "traction" in dumpfields:
                 n = normals[i, :]
-                traction = np.zeros((ntimesteps, 3))
-                traction[:, 0] = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt +
-                                         c_12 * e_pp + c_13 * e_rr) + \
-                                 n[1] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                                 n[2] * (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr
-                                         + 2.0 * c_55 * e_rt)
-                traction[:, 1] = n[0] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                                 n[1] * (c_12 * e_tt + 2.0 * c_25 * e_rt +
-                                         c_22 * e_pp + c_23 * e_rr) + \
-                                 n[2] * 2.0 * (c_46 * e_tp + c_44 * e_rp)
-                traction[:, 2] = n[0] * (c_15 * e_tt + 2.0 * c_55 * e_rt +
-                                         c_25 * e_pp + c_35 * e_rr) + \
-                                 n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
-                                 n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt +
-                                         c_23 * e_pp + c_33 * e_rr)
-                trac[j, :, :] = np.array(traction[:, :], dtype=precision)
+                traction_tmp = np.zeros((ntimesteps, 3))
+                traction_tmp[:, 0] = n[0] * stress_tmp[:, 0] + \
+                                 n[1] * stress_tmp[:, 5] + \
+                                 n[2] * stress_tmp[:, 4]
+                traction_tmp[:, 1] = n[0] * stress_tmp[:, 5] + \
+                                 n[1] * stress_tmp[:, 1] + \
+                                 n[2] * stress_tmp[:, 3]
+                traction_tmp[:, 2] = n[0] * stress_tmp[:, 4] + \
+                                 n[1] * stress_tmp[:, 3] + \
+                                 n[2] * stress_tmp[:, 2]
 
-        time_increment2 = datetime.now() - time_increment1
-        if j == 0:
-            t_increment = time_increment2
-        else:
-            t_increment += time_increment2
+                traction[j, :, :] = np.array(traction_tmp[:, :],
+                                             dtype=precision)
 
         if j == (npoints_buf - 1) or i == (npoints_rank - 1):
-            ttime = datetime.now() - startTime
-            pts = j + 1
-            nb_arrayelems = (j+1) * ntimesteps * 9
-            with open("/disks/marta/HYBRID_tests/InstaseisTest/"
-                      "2017_10_30_generate_input/"
-                      "output_time_%d.txt" % rank, "a") as text_file:
-                print("buf_idx: {}".format(buf_idx), file=text_file)
-                print("# points to write: {}".format(pts), file=text_file)
-                print("number of array elements: {}".format(nb_arrayelems),
-                      file=text_file)
-                print("time to EXTRACT: {}".format(ttime), file=text_file)
-                print("time to ROTATE: {}".format(t_increment), file=text_file)
-            startTime2 = datetime.now()
+
             if "velocity" in dumpfields:
-                dset_vel[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    vel[:j + 1, :, :]
+                dset_v[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
+                    velocity[:j + 1, :, :]
             if "displacement" in dumpfields:
-                dset_disp[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
+                dset_d[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
                     disp[:j + 1, :, :]
             if "strain" in dumpfields:
                 dset_strn[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    strn[:j + 1, :, :]
+                    strain[:j + 1, :, :]
             if "traction" in dumpfields:
-                dset_trac[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    trac[:j + 1, :, :]
+                dset_tr[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
+                    traction[:j + 1, :, :]
             if "stress" in dumpfields:
-                dset_strss[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    strss[:j + 1, :, :]
-            ttime2 = datetime.now() - startTime2
+                dset_strs[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
+                    stress[:j + 1, :, :]
 
-            with open("/disks/marta/HYBRID_tests/InstaseisTest/"
-                      "2017_10_30_generate_input/"
-                      "output_time_%d.txt" % rank, "a") as text_file:
-                print("time to WRITE: {}".format(ttime2), file=text_file)
             buf_idx += 1
+
     f_out.close()
+
+
+def hybrid_get_elastic_params(source, inputfile, outputfile, db_path):
+
+    print("Instaseis: Extracting elastic parameters....")
+
+    f_in = h5py.File(inputfile, "r")
+    if "spherical" in f_in:
+        coordinates = _read_coordinates(inputfile)
+        coordinates_local = False
+    elif "local" in f_in:
+        coordinates = _read_coordinates(inputfile)
+        coords_rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
+        coordinates_local = True
+    else:
+        raise NotImplementedError('Input file must be either in spherical '
+                                  'coordinates or in local coordinates of'
+                                  'the 3D solver.')
+
+    database = open_db(db_path)
+
+    if coordinates_local:
+        receivers = _make_receivers(coordinates, coordinates_local,
+                                    rotmat=coords_rotmat)
+    else:
+        receivers = _make_receivers(coordinates, coordinates_local)
+
+    # Check the bounds of the receivers vs the database
+    receivers = _database_bounds_checks(receivers, database)
+
+    database.get_elastic_params(source, receivers, outputfile)
 
 
 def _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
@@ -470,6 +458,7 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None):
     receivers = []
     items = coordinates.shape[0]
 
+    # review if OK
     if coordinates_local:
         if rotmat is None:
             raise ValueError("Need a rotation matrix in local coordinates")
@@ -559,171 +548,3 @@ def _get_ntimesteps(path_to_db, dt,
     disp = data["displacement"][:, 0]
     return len(disp), database.info.dt
 
-
-class HybridReceiversBoundaryInternalTest(object):
-    """
-    Instaseis Internal Test is a class to generate a network of receivers
-    (recursive generation of a sphere). Also outputs a hdf5 file with
-    coordinates.
-    """
-
-    def __init__(self, latitude, longitude, depth_in_m, savepath, radius=45000,
-                 recursion_level=3):
-        self.latitude = float(latitude)
-        self.longitude = float(longitude)
-        self.depth_in_m = float(depth_in_m)
-        self.radius = float(radius)
-        self.network = self._network_on_sphere(latitude, longitude,
-                                               depth_in_m, radius,
-                                               recursion_level,
-                                               savepath)
-
-    def _network_on_sphere(self, latitude, longitude,
-                           depth_in_m, radius, recursion_level,
-                           savepath):
-        """get list of receivers on a triangulated sphere"""
-        x, y, z = \
-            rotations.coord_transform_lat_lon_depth_to_xyz(latitude,
-                                                           longitude,
-                                                           depth_in_m)
-
-        octahedron_vertices = np.array([
-            [1, 0, 0],  # 0
-            [-1, 0, 0],  # 1
-            [0, 1, 0],  # 2
-            [0, -1, 0],  # 3
-            [0, 0, 1],  # 4
-            [0, 0, -1]  # 5
-        ])
-
-        octahedron_triangles = np.array([
-            [0, 4, 2],
-            [2, 4, 1],
-            [1, 4, 3],
-            [3, 4, 0],
-            [0, 2, 5],
-            [2, 1, 5],
-            [1, 3, 5],
-            [3, 0, 5]])
-
-        vertices, triangles, centroids = self.make_sphere(
-            octahedron_vertices, octahedron_triangles, radius,
-            recursion_level)
-
-        # shift the sphere
-        vertices = np.hstack((vertices[:, 0] + x, vertices[:, 1] + y,
-                              vertices[:, 2] + z)).reshape((len(vertices),
-                                                            -1), order='F')
-        centroids = np.hstack((centroids[:, 0] + x, centroids[:, 1] + y,
-                               centroids[:, 2] + z)).reshape((len(centroids),
-                                                              -1), order='F')
-
-        receivers = []
-        tpr = np.zeros([centroids.shape[0], 3])
-        counter = 0
-        for triangle in centroids:
-            xx, yy, zz = triangle[:]
-            lat, lon, depth = \
-                rotations.coord_transform_xyz_to_lat_lon_depth(xx, yy, zz)
-            receivers.append(Receiver(
-                latitude=lat,
-                longitude=lon,
-                depth_in_m=depth))
-            # save hdf5:
-            tpr[counter, 0] = 90.0 - lat
-            tpr[counter, 1] = lon
-            tpr[counter, 2] = 6371000.0 - depth
-            counter += 1
-
-        normals, areas = self.sphere_surface_vars(vertices, triangles)
-
-        # save hdf5:
-        for i in np.arange(len(receivers)):
-            normals[i, :] = rotations.rotate_vector_xyz_earth_to_xyz_src(
-                normals[i, :], receivers[i].longitude_rad,
-                receivers[i].colatitude_rad)
-        normals *= -1.0
-        f = h5py.File(savepath, 'w', libver='latest')
-        grp = f.create_group("spherical")
-        dset = grp.create_dataset("coordinates", data=tpr,
-                                  compression="gzip", compression_opts=4)
-        dset = grp.create_dataset("normals", data=normals,
-                                  compression="gzip", compression_opts=4)
-        dset = grp.create_dataset("weights", data=areas,
-                                  compression="gzip", compression_opts=4)
-        grp.attrs['nb_points'] = centroids.shape[0]
-        f.close()
-
-        receivers = [receivers, normals, areas, centroids]
-
-        return receivers
-
-    def make_sphere(self, vertices, triangles, radius, recursion_level):
-        vertex_array, index_array = vertices, triangles
-        for i in range(recursion_level - 1):
-            vertex_array, index_array = self.triangulate(vertex_array,
-                                                         index_array)
-        # multiply unit sphere by radius
-        vertex_array *= radius
-
-        centroid = np.zeros((len(index_array), 3))
-        for i in range(len(index_array)):
-            triangle = np.array(
-                [vertex_array[index_array[i, 0]],
-                 vertex_array[index_array[i, 1]],
-                 vertex_array[index_array[i, 2]]])
-            centroid[i, :] = np.dot(np.transpose(triangle),
-                                    1 / 3. * np.ones(3))
-
-        return vertex_array, index_array, centroid
-
-    def sphere_surface_vars(self, vertex, triangle):
-        n = len(triangle)
-        normals = np.zeros((n, 3))
-        areas = np.zeros(n)
-        for i in range(n):
-            y = vertex[triangle[i]]
-            vect = np.array([y[1] - y[0], y[2] - y[1], y[0] - y[2]])
-            normals[i, :] = np.cross(vect[0], vect[2])  # outward facing
-            norm_normals = np.linalg.norm(normals[i, :])
-            areas[i] = norm_normals / 2.0
-            normals[i, :] /= norm_normals
-        return normals, areas
-
-    def triangulate(self, vertices, triangles):
-        """
-        Subdivide each triangle in the old approximation.
-        Each input triangle (vertices [0,1,2]) is subdivided into four new
-        triangles:
-                1
-               /\
-              /  \
-            b/____\ c
-            /\    /\
-           /  \  /  \
-          /____\/____\
-         0      a     2
-        """
-        v0 = vertices[triangles[:, 0]]
-        v1 = vertices[triangles[:, 1]]
-        v2 = vertices[triangles[:, 2]]
-        a = 0.5 * (v0 + v2)
-        b = 0.5 * (v0 + v1)
-        c = 0.5 * (v1 + v2)
-        self.normalize(a)
-        self.normalize(b)
-        self.normalize(c)
-
-        # Stack triangles together. See that vertices are duplicated.
-        vertices = np.hstack(
-            (v0, b, a, b, v1, c, a, b, c, a, c, v2)).reshape((-1, 3))
-
-        return vertices, np.arange(len(vertices)).reshape((-1, 3))
-
-    def normalize(self, arr):
-        ''' Normalize a numpy array of 3 component vectors shape=(n,3) '''
-        lens = np.sqrt(arr[:, 0] ** 2 + arr[:, 1] ** 2 + arr[:, 2] ** 2)
-        arr[:, 0] /= lens
-        arr[:, 1] /= lens
-        arr[:, 2] /= lens
-        return arr
