@@ -99,7 +99,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
 
-        if "hybrid" in components and "strain" in components:
+        if "hybrid" and "strain" in components:
             if not isinstance(source, Source):
                 raise NotImplementedError
             if self.info.dump_type != 'displ_only':
@@ -226,7 +226,8 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_strain[:, 0] += strain_3[:, 0] * fac_1
                 final_strain[:, 1] += strain_3[:, 1] * fac_1
                 final_strain[:, 2] += strain_3[:, 2] * fac_1
-                final_strain[:, 3] += strain_3[:, 3] * fac_2
+                final_strain[:, 3] += strain_3[:, 3] * fac_2 # review is it
+                # definitely in ss pp zz zp zs sp ???
                 final_strain[:, 4] += strain_3[:, 4] * fac_1
                 final_strain[:, 5] += strain_3[:, 5] * fac_2
 
@@ -243,6 +244,12 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_strain[:, 3] += strain_4[:, 3] * fac_2
                 final_strain[:, 4] += strain_4[:, 4] * fac_1
                 final_strain[:, 5] += strain_4[:, 5] * fac_2
+
+                # review is final_strain defo in voigt???
+                # TEST by swapping
+                #tmp = final_strain[:, 3]
+                #final_strain[:, 3] = final_strain[:, 5]
+                #final_strain[:, 5] = tmp
 
                 # rotate final_strain to tpr
                 for i in range(len(final_strain)):
@@ -273,17 +280,6 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 data["strain"] = strain
 
             # rotate final_displ to tpr
-            """
-            final_disp = rotations.rotate_vector_src_to_tpr(
-                final.T, coordinates.phi, source.longitude_rad,
-                source.colatitude_rad, receiver.longitude_rad,
-                receiver.colatitude_rad).T
-            if "local" in components:
-                final_disp = rotations.hybrid_vector_tpr_to_local_cartesian(
-                    final_disp, coords_rotmat, receiver.longitude,
-                        receiver.colatitude)
-
-            """
             if "local" in components:
                 final_disp = rotations.hybrid_vector_src_to_local_cartesian(
                     final.T, coords_rotmat, coordinates.phi,
@@ -302,6 +298,35 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
 
             dt = self.info.dt
             data["dt"] = dt
+
+            if not self.read_on_demand:
+                mesh_mu = self.parsed_mesh.mesh_mu
+                mesh_rho = self.parsed_mesh.mesh_rho
+                mesh_lambda = self.parsed_mesh.mesh_lambda
+                mesh_xi = self.parsed_mesh.mesh_xi
+                mesh_phi = self.parsed_mesh.mesh_phi
+                mesh_eta = self.parsed_mesh.mesh_eta
+
+            else:
+                mesh_mu = mesh["mesh_mu"]
+                mesh_rho = mesh["mesh_rho"]
+                mesh_lambda = mesh["mesh_lambda"]
+                mesh_xi = mesh["mesh_xi"]
+                mesh_phi = mesh["mesh_phi"]
+                mesh_eta = mesh["mesh_eta"]
+
+            npol = self.info.spatial_order
+            mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+            rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+            lbda = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+            xi = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
+            phi = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
+            eta = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
+
+            params = {'mu': mu, 'rho': rho, 'lambda': lbda, 'xi': xi, 'phi': phi,
+                      'eta': eta}
+
+            data["elastic_params"] = params
 
         return data
 

@@ -696,7 +696,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             st += tr
         return st
 
-    def get_elastic_params(self, source, receiver):
+    def get_elastic_params(self, source, receivers, outfile):
         """
         Extract elastic parameters mu, lambda, xi, phi, eta 
         from an Instaseis database. Saves extracted data in a hdf5 file.
@@ -713,7 +713,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
 
-        return self._get_elastic_params(source, receiver)
+        return self._get_elastic_params(source, receivers, outfile)
 
     def get_data_hybrid(self, source, receiver, dumpfields,
                         dumpcoords="spherical", coords_rotmat=None,
@@ -768,8 +768,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                       "hybrid data extraction.")
 
         components = ("hybrid",)
-        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
-                dumpfields:
+        if "strain" or "traction" or "stress" in dumpfields:
             components += ("strain",)
         if "local" in dumpcoords:
             components += ("local",)
@@ -796,7 +795,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             0: self.info.sliprate,
             1: self.info.slip}
 
-        if "displacement" in dumpfields or "velocity" in dumpfields:
+        if "displacement" or "velocity" in dumpfields:
             displ = data["displacement"]
 
             vel = {}
@@ -872,8 +871,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                            df=1. / self.info.dt,
                                            corners=4, zerophase=True)
 
-        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
-                dumpfields:
+        if "strain" or "traction" or "stress" in dumpfields:
             strain = data["strain"]
 
             for comp in strain.keys():
@@ -953,8 +951,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             vel_array[:, 1] = vel['p']
             vel_array[:, 2] = vel['r']
             data["velocity"] = vel_array
-        if "strain" in dumpfields or "traction" in dumpfields or "stress" in \
-                dumpfields:
+        if "strain" or "traction" or "stress" in dumpfields:
             strain_array = np.zeros((len(strain['t']), 6))
             strain_array[:, 0] = strain['t']
             strain_array[:, 1] = strain['p']
