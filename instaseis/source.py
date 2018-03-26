@@ -25,6 +25,7 @@ from obspy.signal.util import next_pow_2
 import obspy.io.xseed.parser
 import os
 from scipy import interp
+from scipy.integrate import cumtrapz
 import h5py
 
 from . import ReceiverParseError, SourceParseError
@@ -1596,9 +1597,11 @@ class HybridSources(object):
         ...     filter_freqs=(0.01, 0.125))
     """
 
-    def __init__(self, fieldsfile, coordsfile, filter_freqs=None):
-        self.pointsources = self._create_pointsources(fieldsfile, coordsfile,
-                                                      filter_freqs)
+    def __init__(self, fieldsfile, coordsfile, bg_field_file=None, 
+            filter_freqs=None, npoints_rank=None, start_idx=None):
+        self.pointsources = self._create_pointsources(
+                fieldsfile, coordsfile, bg_field_file,
+                filter_freqs, npoints_rank, start_idx)
 
     def __len__(self):
         return len(self.pointsources)
@@ -1606,45 +1609,55 @@ class HybridSources(object):
     def __getitem__(self, index):
         return self.pointsources[index]
 
-    def _create_pointsources(self, fieldsfile, coordsfile, filter_freqs=None):
+    def _create_pointsources(self, fieldsfile, coordsfile, bg_field_file=None,
+                             filter_freqs=None, npoints_rank=None, start_idx=None):
         """generate point sources from local simulation fields"""
 
         f_fields = h5py.File(fieldsfile, "r")
         f_coords = h5py.File(coordsfile, "r")
 
-        if "spherical" in f_fields:
+        if bg_field_file:
+            f_bg_field = h5py.File(bg_field_file, "r")
+        # review bg_field_file needs the same group name too!
+        if "spherical" in f_fields and "spherical" in f_coords:
             grp_fields = f_fields['spherical']
             grp_coords = f_coords['spherical']
-        if "local" in f_fields:
+            if bg_field_file:
+                grp_bg_field = f_bg_field['spherical']
+        elif "local" in f_fields and "local" in f_coords:
             grp_fields = f_fields['local']
             grp_coords = f_coords['local']
             rotmat = grp_coords.attrs['rotmat_xyz_loc_to_glob']
-
-        fields_npoints = grp_fields.attrs['nb_points']
-        coords_npoints = grp_coords.attrs['nb_points']
-        if coords_npoints != fields_npoints:
-            raise ValueError("The number of points in the fieldsfile and in "
-                             "coordsfile must be the same.")
+            radius_of_box_top = grp_coords.attrs['radius_of_box_top'][0]
+            if bg_field_file:
+                grp_bg_field = f_bg_field['local']
         else:
-            npoints = fields_npoints
+            raise NotImplementedError("Only spherical or local groups "
+                                      "allowed. Both files must have the same "
+                                      "groups, i.e. be in the same "
+                                      "coordinates.")
+        if npoints_rank is None:
+            npoints = grp_coords.attrs['nb_points']
+        else:
+            npoints = npoints_rank
 
-        tpr = grp_coords['coordinates']
+        tpr = grp_coords['coordinates'][int(start_idx):int(
+            start_idx)+int(npoints), :]
         normals = grp_coords['normals']
-        weights = grp_coords['weights']
-        dt = grp_fields.attrs['dt']
-
-        if "local" in f_fields:
-            #ToDo this is wrong?? normals =
-            # rotations.hybrid_vector_local_cartesian_to_tpr(
-            # normals, rotmat)
+        weights = grp_coords['gll_weights']
+        #dt = grp_fields.attrs['dt'] # review !!! doesn't exist in specfem
+        # output
+        dt = 0.1
+        if "local" in f_coords:
+            tpr[:, 2] += radius_of_box_top  # radius of the Earth
             tpr = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
                 tpr, rotmat)
 
-        mu_all = f_coords['elastic_params/mu']
-        lbd_all = f_coords['elastic_params/lambda']
-        xi_all = f_coords['elastic_params/xi']
-        phi_all = f_coords['elastic_params/phi']
-        eta_all = f_coords['elastic_params/eta']
+        mu_all = f_coords['Instaseis_medium_params/mu']
+        lbd_all = f_coords['Instaseis_medium_params/lambda']
+        xi_all = f_coords['Instaseis_medium_params/xi']
+        phi_all = f_coords['Instaseis_medium_params/phi']
+        eta_all = f_coords['Instaseis_medium_params/eta']
 
         # When extracting from hdf5, dt is a float. When extracting from
         # netcdf, dt is a numpy array of length 1.
@@ -1654,6 +1667,10 @@ class HybridSources(object):
         displ_all = grp_fields['displacement']
         traction_all = None
         strain_all = None
+        if bg_field_file:
+            velocity_bg_all = grp_bg_field['velocity']
+            stress_bg_all = grp_bg_field['stress']
+
         if 'traction' in grp_fields:
             traction_all = grp_fields['traction']
         elif 'strain' in grp_fields:
@@ -1662,24 +1679,35 @@ class HybridSources(object):
             ValueError("Need strains or tractions to repropagate field via "
                        "hybrid sources.")
         pointsources = []
-        for i in np.arange(npoints):
-            n = normals[i, :]
+        for j in np.arange(npoints):
+            i = j + int(start_idx)
+            n = np.array(normals[i, :], dtype=np.float64)
             w = weights[i]
-            latitude = 90.0 - tpr[i, 0]
-            longitude = tpr[i, 1]
-            depth_in_m = 6371000.0 - tpr[i, 2]
-            displ = displ_all[i, :, :]
-
+            latitude = 90.0 - tpr[j, 0]
+            longitude = tpr[j, 1]
+            depth_in_m = 6371000.0 - tpr[j, 2]
+            if -1.0 <= depth_in_m <= 0.0:
+                depth_in_m = 0.0
+            
+            if bg_field_file:
+                velocity_bg = velocity_bg_all[i, :, :]
+                displ_bg = cumtrapz(velocity_bg, dx=dt, initial=0.0)
+                displ = displ_all[i, :, :] - displ_bg
+            else:
+                displ = displ_all[i, :, :]            
+           
             if "local" in f_fields:
+                n = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    n, rotmat, tpr[j, 1], tpr[j, 0])
                 displ = rotations.hybrid_vector_local_cartesian_to_tpr(
-                    displ, rotmat, tpr[i, 1], tpr[i, 0])
+                    displ, rotmat, tpr[j, 1], tpr[j, 0])
 
             mu = mu_all[i]
             lbd = lbd_all[i]
             xi = xi_all[i]
             phi = phi_all[i]
             eta = eta_all[i]
-            # review only transverse isotropy in this case
+            # review only transverse isotropy in this case?
             fa_ani_thetal = 0.0
             fa_ani_phil = 0.0
 
@@ -1706,7 +1734,7 @@ class HybridSources(object):
             c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                               fa_ani_phil, 1, 2, 0, 1)
             c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 2, 0, 2, 0)
+                                  fa_ani_phil, 2, 0, 2, 0)
             c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                               fa_ani_phil, 0, 1, 0, 1)
 
@@ -1771,38 +1799,66 @@ class HybridSources(object):
                 traction = traction_all[i, :, :]
                 if "local" in f_fields:
                     traction = rotations.hybrid_vector_local_cartesian_to_tpr(
-                        traction, rotmat, tpr[i, 1], tpr[i, 0])
+                        traction, rotmat, tpr[j, 1], tpr[j, 0])
                 t0 = np.array(traction[:, 0])  # theta
                 t1 = np.array(traction[:, 1])  # phi
                 t2 = np.array(traction[:, 2])  # r
 
             else:
-                strain = strain_all[i, :, :]
-                e_tt = np.array(strain[:, 0])
-                e_pp = np.array(strain[:, 1])
-                e_rr = np.array(strain[:, 2])
-                e_rp = np.array(strain[:, 3])
-                e_rt = np.array(strain[:, 4])
-                e_tp = np.array(strain[:, 5])
+                strain = strain_all[i, :, :] 
+                # 123 = tpr or 123 = xyz
+                e_11 = np.array(strain[:, 0], dtype=np.float64)
+                e_22 = np.array(strain[:, 1], dtype=np.float64)
+                e_33 = np.array(strain[:, 2], dtype=np.float64)
+                e_32 = np.array(strain[:, 3], dtype=np.float64)
+                e_31 = np.array(strain[:, 4], dtype=np.float64)
+                e_12 = np.array(strain[:, 5], dtype=np.float64)
+                
+                if bg_field_file:
+                    stress_bg = stress_bg_all[i, :, :]
+                    sigma_11 = np.array(stress_bg[:, 0], dtype=np.float64)
+                    sigma_22 = np.array(stress_bg[:, 1], dtype=np.float64)
+                    sigma_33 = np.array(stress_bg[:, 2], dtype=np.float64)
+                    sigma_32 = np.array(stress_bg[:, 3], dtype=np.float64)
+                    sigma_31 = np.array(stress_bg[:, 4], dtype=np.float64)
+                    sigma_12 = np.array(stress_bg[:, 5], dtype=np.float64)
+                else:
+                    sigma_11 = 0.0
+                    sigma_22 = 0.0
+                    sigma_33 = 0.0
+                    sigma_32 = 0.0
+                    sigma_31 = 0.0
+                    sigma_12 = 0.0
 
-                t0 = n[0] * (c_11 * e_tt + 2.0 * c_15 * e_rt + c_12 * e_pp +
-                             c_13 * e_rr) + \
-                     n[1] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                     n[2] * (c_15 * e_tt + c_25 * e_pp + c_35 * e_rr + 2.0 *
-                             c_55 * e_rt)
+                # if 123 = xyz, then get the normal into xyz, calculate
+                # traction in xyz and then rotate it to tpr
+                if "local" in f_fields:
+                    n = np.array(normals[i, :], dtype=np.float64)
 
-                t1 = n[0] * 2.0 * (c_66 * e_tp + c_46 * e_rp) + \
-                     n[1] * (c_12 * e_tt + 2.0 * c_25 * e_rt + c_22 * e_pp +
-                             c_23 * e_rr) + \
-                     n[2] * 2.0 * (c_46 * e_tp + c_44 * e_rp)
+                t0 = n[0] * ((c_11 * e_11 + 2.0 * c_15 * e_31 + c_12 * e_22 +
+                             c_13 * e_33) - sigma_11) + \
+                     n[1] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                     n[2] * ((c_15 * e_11 + c_25 * e_22 + c_35 * e_33 + 2.0 *
+                             c_55 * e_31) - sigma_31)
 
-                t2 = n[0] * (c_15 * e_tt + 2.0 * c_55 * e_rt + c_25 * e_pp +
-                             c_35 * e_rr) + \
-                     n[1] * 2.0 * (c_46 * e_tp + c_44 * e_rp) + \
-                     n[2] * (c_13 * e_tt + 2.0 * c_35 * e_rt + c_23 * e_pp +
-                             c_33 * e_rr)
-            # TODO how do we rotate this traction into tpr if it's local??
-            # TODO do all the c_ij work for local xyz too? I think so?
+                t1 = n[0] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                     n[1] * ((c_12 * e_11 + 2.0 * c_25 * e_31 + c_22 * e_22 +
+                             c_23 * e_33) - sigma_22) + \
+                     n[2] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32)
+
+                t2 = n[0] * ((c_15 * e_11 + 2.0 * c_55 * e_31 + c_25 * e_22 +
+                             c_35 * e_33) - sigma_31) + \
+                     n[1] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32)+ \
+                     n[2] * ((c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
+                             c_33 * e_33) - sigma_33)
+
+                if "local" in f_fields:
+                    traction = np.array([t0, t1, t2]).T
+                    traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                        traction, rotmat, tpr[j, 1], tpr[j, 0])
+                    t0 = np.array(traction[:, 0])  # theta
+                    t1 = np.array(traction[:, 1])  # phi
+                    t2 = np.array(traction[:, 2])  # r
 
             if filter_freqs is not None:
                 t0 = bandpass(t0, freqmin=filter_freqs[0],
