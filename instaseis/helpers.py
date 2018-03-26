@@ -218,4 +218,4 @@ def c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
                    + (4. * eta_ani - 4.) * mu / xi_ani)\
                    * (s[i] * s[j] * s[k] * s[l])
 
-    return c_ijkl_ani
+    return np.float64(c_ijkl_ani)
