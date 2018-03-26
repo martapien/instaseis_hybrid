@@ -21,10 +21,9 @@ from . import rotations
 from .source import Source, Receiver
 from .helpers import c_ijkl_ani
 from . import open_db
+import os
 
-from mpi4py import MPI
-
-rank = MPI.COMM_WORLD.Get_rank()
+WORK_DIR = os.getcwd()
 
 
 def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
@@ -44,7 +43,8 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
         raise NotImplementedError("Can dump only in tpr (spherical) or xyz ("
                                   "(local) coordinates")
 
-    f_in = h5py.File(inputfile, "r")
+    f_in = h5py.File(inputfile, "a")
+
     if "spherical" in f_in:
         coordinates = _read_coordinates(inputfile)
         if dumpcoords == "local":
@@ -52,10 +52,12 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
         else:
             coords_rotmat = None
         coordinates_local = False
+        radius_of_box_top = None
     elif "local" in f_in:
         coordinates = _read_coordinates(inputfile)
         coords_rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
         coordinates_local = True
+        radius_of_box_top = f_in['local'].attrs['radius_of_box_top']
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
@@ -66,11 +68,22 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
             normals = f_in['spherical/normals'][:, :]  # in tpr
         elif "local" in f_in:
             normals = f_in['local/normals'][:, :]
-            # ToDo normals =
+            # ToDo normals = will need to do it later on where we have
+            # coords in tpr!
     else:
         normals = None
 
     npoints = coordinates.shape[0]
+
+    grp = f_in.create_group("Instaseis_medium_params")
+    grp.create_dataset("mu", (npoints,), dtype=precision)
+    grp.create_dataset("rho", (npoints,), dtype=precision)
+    grp.create_dataset("lambda", (npoints,), dtype=precision)
+    grp.create_dataset("xi", (npoints,), dtype=precision)
+    grp.create_dataset("phi", (npoints,), dtype=precision)
+    grp.create_dataset("eta", (npoints,), dtype=precision)
+
+    f_in.close()
 
     if time_window is not None:
         _time_window_bounds_checks(time_window, fwd_db_path)
@@ -119,9 +132,10 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
     inputs["npoints_buf"] = npoints_buf
     inputs["coords_rotmat"] = coords_rotmat
     inputs["outputfile"] = outputfile
+    inputs["inputfile"] = inputfile
     inputs["fwd_db_path"] = fwd_db_path
     inputs["remove_source_shift"] = remove_source_shift
-
+    inputs["radius_of_box_top"] = radius_of_box_top
     print("Instaseis: Done preparing inputs for data generation!")
 
     return inputs, coordinates
@@ -200,7 +214,8 @@ def hybrid_generate_output(source, inputs, coordinates,
     outputfile = inputs["outputfile"]
     fwd_db_path = inputs["fwd_db_path"]
     remove_source_shift = inputs["remove_source_shift"]
-
+    inputfile = inputs["inputfile"]
+    radius_of_box_top = inputs["radius_of_box_top"][0]
     database = open_db(fwd_db_path)
     if database.info.is_reciprocal:
         raise ValueError('Extraction of background wavefield requires a '
@@ -208,7 +223,8 @@ def hybrid_generate_output(source, inputs, coordinates,
 
     if coordinates_local:
         receivers = _make_receivers(coordinates, coordinates_local,
-                                    rotmat=coords_rotmat)
+                                    rotmat=coords_rotmat,
+                                    radius_of_box_top=radius_of_box_top)
         if dumpcoords == "local":
             # we transpose it to have loc_to_glob, this rotmat is glob_to_loc
             coords_rotmat = coords_rotmat.T
@@ -222,9 +238,11 @@ def hybrid_generate_output(source, inputs, coordinates,
 
     if comm is None:
         f_out = h5py.File(outputfile, "a")
+        f_coords = h5py.File(inputfile, "a")
         npoints_rank = npoints
     else:
         f_out = h5py.File(outputfile, "a", driver='mpio', comm=comm)
+        f_coords = h5py.File(inputfile, "a", driver='mpio', comm=comm)
 
     grp_coords = f_out[dumpcoords]
     if "velocity" in dumpfields:
@@ -243,8 +261,23 @@ def hybrid_generate_output(source, inputs, coordinates,
         stress = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
         dset_strs = grp_coords["stress"]
 
-    buf_idx = 0 
+    grp_params = f_coords["Instaseis_medium_params"]
+    dset_mu = grp_params["mu"]
+    dset_rho = grp_params["rho"]
+    dset_lambda = grp_params["lambda"]
+    dset_xi = grp_params["xi"]
+    dset_phi = grp_params["phi"]
+    dset_eta = grp_params["eta"]
+    mu_all = np.zeros(npoints_buf, dtype=precision)
+    rho_all = np.zeros(npoints_buf, dtype=precision)
+    lbd_all = np.zeros(npoints_buf, dtype=precision)
+    xi_all = np.zeros(npoints_buf, dtype=precision)
+    phi_all = np.zeros(npoints_buf, dtype=precision)
+    eta_all = np.zeros(npoints_buf, dtype=precision)
+
+    buf_idx = 0
     for i in np.arange(npoints_rank):
+
         j = i - buf_idx * npoints_buf
 
         data = database.get_data_hybrid(source, receivers[i], dumpfields,
@@ -253,6 +286,13 @@ def hybrid_generate_output(source, inputs, coordinates,
                                         remove_source_shift=remove_source_shift,
                                         reconvolve_stf=reconvolve_stf, dt=dt,
                                         filter_freqs=filter_freqs)
+
+        mu_all[j] = data["elastic_params"]["mu"]
+        rho_all[j] = data["elastic_params"]["rho"]
+        lbd_all[j] = data["elastic_params"]["lambda"]
+        xi_all[j] = data["elastic_params"]["xi"]
+        phi_all[j] = data["elastic_params"]["phi"]
+        eta_all[j] = data["elastic_params"]["eta"]
 
         if "velocity" in dumpfields:
             velocity[j, :, :] = np.array(data["velocity"][itmin:itmax, :],
@@ -348,6 +388,19 @@ def hybrid_generate_output(source, inputs, coordinates,
 
         if j == (npoints_buf - 1) or i == (npoints_rank - 1):
 
+            dset_mu[start_idx+buf_idx*npoints_buf:start_idx+i+1] = \
+                mu_all[:j+1]
+            dset_rho[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                rho_all[:j+1]
+            dset_lambda[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                lbd_all[:j+1]
+            dset_xi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                xi_all[:j+1]
+            dset_phi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                phi_all[:j+1]
+            dset_eta[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                eta_all[:j+1]
+
             if "velocity" in dumpfields:
                 dset_v[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
                     velocity[:j + 1, :, :]
@@ -367,37 +420,117 @@ def hybrid_generate_output(source, inputs, coordinates,
             buf_idx += 1
 
     f_out.close()
+    f_coords.close()
 
 
-def hybrid_get_elastic_params(source, inputfile, outputfile, db_path):
+def hybrid_get_elastic_params(source, inputfile, db_path,
+                              npoints_rank=None, start_idx=0, comm=None):
 
     print("Instaseis: Extracting elastic parameters....")
 
-    f_in = h5py.File(inputfile, "r")
+    if comm is None:
+        f_in = h5py.File(inputfile, "a")
+    else:
+        f_in = h5py.File(inputfile, "a", driver='mpio', comm=comm)
+
     if "spherical" in f_in:
         coordinates = _read_coordinates(inputfile)
         coordinates_local = False
+        radius_of_box_top = None
     elif "local" in f_in:
         coordinates = _read_coordinates(inputfile)
         coords_rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
         coordinates_local = True
+        radius_of_box_top = f_in['local'].attrs['radius_of_box_top']
+
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
                                   'the 3D solver.')
+    npoints = coordinates.shape[0]
+
+    if comm is None:
+        f_in = h5py.File(inputfile, "a")
+        npoints_rank = npoints
+
+    precision = 'f4'
+    max_data_in_bytes = 1024
+    ncomp = 6
+    ntimesteps = 1
+    if precision == 'f4':
+        npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) /
+                                   ntimesteps))
+    elif precision == 'f8':
+        npoints_buf = int(floor(((max_data_in_bytes / 8) / ncomp) /
+                                   ntimesteps))
+
+    
+    """
+    grp = f_in["Instaseis_medium_params"]
+    dset_mu = grp["mu"]
+    dset_rho = grp["rho"]
+    dset_lambda = grp["lambda"]
+    dset_xi = grp["xi"]
+    dset_phi = grp["phi"]
+    dset_eta = grp["eta"]
+    """
+    grp = f_in.create_group("Instaseis_medium_params")
+    dset_mu = grp.create_dataset("mu", (npoints,), dtype=precision)
+    dset_rho = grp.create_dataset("rho", (npoints,), dtype=precision)
+    dset_lambda = grp.create_dataset("lambda", (npoints,), dtype=precision)
+    dset_xi = grp.create_dataset("xi", (npoints,), dtype=precision)
+    dset_phi = grp.create_dataset("phi", (npoints,), dtype=precision)
+    dset_eta = grp.create_dataset("eta", (npoints,), dtype=precision)
+    
+    mu_all = np.zeros(npoints_buf, dtype=precision)
+    rho_all = np.zeros(npoints_buf, dtype=precision)
+    lbd_all = np.zeros(npoints_buf, dtype=precision)
+    xi_all = np.zeros(npoints_buf, dtype=precision)
+    phi_all = np.zeros(npoints_buf, dtype=precision)
+    eta_all = np.zeros(npoints_buf, dtype=precision)
 
     database = open_db(db_path)
 
     if coordinates_local:
         receivers = _make_receivers(coordinates, coordinates_local,
-                                    rotmat=coords_rotmat)
+                                    rotmat=coords_rotmat,
+                                    radius_of_box_top=radius_of_box_top)
     else:
         receivers = _make_receivers(coordinates, coordinates_local)
 
     # Check the bounds of the receivers vs the database
     receivers = _database_bounds_checks(receivers, database)
 
-    database.get_elastic_params(source, receivers, outputfile)
+    buf_idx = 0
+    for i in np.arange(npoints_rank):
+        j = i - buf_idx * npoints_buf
+
+        receiver = receivers[start_idx+i]  # review do we need the +1?
+        data = database.get_elastic_params(source, receiver)
+
+        mu_all[j] = data["mu"]
+        rho_all[j] = data["rho"]
+        lbd_all[j] = data["lambda"]
+        xi_all[j] = data["xi"]
+        phi_all[j] = data["phi"]
+        eta_all[j] = data["eta"]
+
+        if j == (npoints_buf - 1) or i == (npoints_rank - 1):
+
+            dset_mu[start_idx+buf_idx*npoints_buf:start_idx+i+1] = \
+                mu_all[:j+1]
+            dset_rho[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                rho_all[:j+1]
+            dset_lambda[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                lbd_all[:j+1]
+            dset_xi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                xi_all[:j+1]
+            dset_phi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                phi_all[:j+1]
+            dset_eta[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
+                eta_all[:j+1]
+            buf_idx += 1
+    f_in.close()
 
 
 def _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
@@ -448,7 +581,8 @@ def _read_coordinates(inputfile):
     return coordinates
 
 
-def _make_receivers(coordinates, coordinates_local=False, rotmat=None):
+def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
+                    radius_of_box_top=None):
     """
     Method to handle hybrid boundary input (in spherical coordinates) defined
     by the mesh of a local solver.
@@ -458,14 +592,15 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None):
     receivers = []
     items = coordinates.shape[0]
 
-    # review if OK
     if coordinates_local:
-        if rotmat is None:
-            raise ValueError("Need a rotation matrix in local coordinates")
-        coordinates[:, 2] += 6371000.  # radius of the Earth
+        if rotmat is None or radius_of_box_top is None:
+            raise ValueError("Need a rotation matrix in local coordinates and"
+                             " the radius of the top of the box!")
+        coordinates[:, 2] += radius_of_box_top
+        # radius of the Earth OR radius of box top if at depth
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
             coordinates, rotmat)
-
+    # f = open("coordinates_spherical.txt", 'w')
     for i in np.arange(items):
         lat = 90.0 - coordinates[i, 0]
         lon = coordinates[i, 1]
@@ -474,7 +609,9 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None):
             latitude=lat,
             longitude=lon,
             depth_in_m=dep))
-
+        
+        # f.write("lat: %f  lon: %f  depth: %f \n" %(lat, lon, dep))
+    # f.close()
     return receivers
 
 
@@ -508,14 +645,16 @@ def _database_bounds_checks(receivers, database):
         for rec in receivers:
             if db_min_depth <= rec.depth_in_m <= db_max_depth:
                 pass
-            elif -1.0 <= rec.depth_in_m <= 0.0:
+            elif rec.depth_in_m <= 0.0:
                 rec.depth_in_m = 0.0
-            else:
-                raise ValueError("The shallowest receiver to construct a hybrid"
+                warnings.warn("The shallowest receiver to construct a hybrid"
                                  "src is %.1f km deep. The database only has a"
-                                 "depth range from %.1f km to %.1f km." % (
+                                 "depth range from %.1f km to %.1f km." 
+                                 "Receiver depth set to 0." % (
                                      min_depth / 1000.0, db_min_depth / 1000.0,
                                      db_max_depth / 1000.0))
+            else:
+                raise NotImplementedError
 
     if not (db_min_depth <= max_depth <= db_max_depth):
         raise ValueError("The deepest receiver to construct a hybrid src"
