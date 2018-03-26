@@ -70,14 +70,14 @@ def compress_output(input_filename, output_filename, output_filetype,
 
                 if chunking_type == "points":
                     chunks = (shape[0], chunking_size, shape[2])
-                    factor = int((8 * 1024 * 1024 / 4) / shape[0])  # divide by
-                    # npoints
-                    s = int(ceil(shape[1] / float(factor)))  # nb of 8mb blocks
+                    factor = int((1024 * 1024 * 1024) / (shape[2] * 4 *shape[0]))
+                    # divide by npoints * ncomp * nbytes(float32)
+                    s = int(ceil(shape[1] / float(factor)))  # nb of 1GB blocks
                 elif chunking_type == "times":
                     chunks = (chunking_size, shape[1], shape[2])
-                    factor = int((8 * 1024 * 1024 / 4) / shape[1])  # divide by
-                    # ntimesteps
-                    s = int(ceil(shape[0] / float(factor)))  # nb of 8mb blocks
+                    factor = int((1024 * 1024 * 1024) / (shape[2] * 4 * shape[1]))
+                    # divide by ntimesteps * ncomp * nbytes(float32)
+                    s = int(ceil(shape[0] / float(factor)))  # nb of 1GB blocks
                 else:
                     raise NotImplementedError("Unknown chunking flag.")
 
