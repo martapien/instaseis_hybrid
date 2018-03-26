@@ -619,7 +619,7 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         f.close()
     """
 
-    def _get_elastic_params(self, source, receivers, outfile):
+    def _get_elastic_params(self, source, receiver):
         # review see that we just enter a file and not receivers?
         """
         Extract elastic parameters mu, lambda, xi, phi, eta 
@@ -636,61 +636,23 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             "elastic_params" dataset with mu, lambda, xi, phi, eta 
         """
 
-        npoints = len(receivers.network[0])
-        mu = np.zeros(npoints)
-        rho = np.zeros(npoints)
-        lbda = np.zeros(npoints)
-        xi = np.zeros(npoints)
-        phi = np.zeros(npoints)
-        eta = np.zeros(npoints)
+        if self.info.is_reciprocal:
+            a, b = source, receiver
+        else:
+            a, b = receiver, source
 
-        i = 0
-        for receiver in receivers.network[0]:
-            if self.info.is_reciprocal:
-                a, b = source, receiver
-            else:
-                a, b = receiver, source
+        rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+            a.x(planet_radius=self.info.planet_radius),
+            a.y(planet_radius=self.info.planet_radius),
+            a.z(planet_radius=self.info.planet_radius),
+            b.longitude, b.colatitude)
 
-            rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
-                a.x(planet_radius=self.info.planet_radius),
-                a.y(planet_radius=self.info.planet_radius),
-                a.z(planet_radius=self.info.planet_radius),
-                b.longitude, b.colatitude)
+        coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+        element_info = self._get_element_info(coordinates=coordinates)
+        params = self._get_params(element_info)
 
-            coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
-            element_info = self._get_element_info(coordinates=coordinates)
-            params = self._get_params(element_info)
-            mu[i] = params['mu']
-            rho[i] = params['rho']
-            lbda[i] = params['lambda']
-            xi[i] = params['xi']
-            phi[i] = params['phi']
-            eta[i] = params['eta']
-            i += 1
+        return params
 
-        f = h5py.File(outfile, "a")
-        grp = f.create_group('elastic_params')
-        compression = 4
-        grp.create_dataset('mu', data=mu,
-                           compression="gzip",
-                           compression_opts=compression)
-        grp.create_dataset('rho', data=rho,
-                           compression="gzip",
-                           compression_opts=compression)
-        grp.create_dataset('lambda', data=lbda,
-                           compression="gzip",
-                           compression_opts=compression)
-        grp.create_dataset('xi', data=xi,
-                           compression="gzip",
-                           compression_opts=compression)
-        grp.create_dataset('phi', data=phi,
-                           compression="gzip",
-                           compression_opts=compression)
-        grp.create_dataset('eta', data=eta,
-                           compression="gzip",
-                           compression_opts=compression)
-
-        f.close()
 
 
 

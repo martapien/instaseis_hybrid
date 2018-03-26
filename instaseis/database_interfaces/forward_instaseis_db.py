@@ -245,12 +245,6 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_strain[:, 4] += strain_4[:, 4] * fac_1
                 final_strain[:, 5] += strain_4[:, 5] * fac_2
 
-                # review is final_strain defo in voigt???
-                # TEST by swapping
-                #tmp = final_strain[:, 3]
-                #final_strain[:, 3] = final_strain[:, 5]
-                #final_strain[:, 5] = tmp
-
                 # rotate final_strain to tpr
                 for i in range(len(final_strain)):
                     final_strain[i, :] = rotations.\

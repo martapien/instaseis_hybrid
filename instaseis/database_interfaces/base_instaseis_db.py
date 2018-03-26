@@ -519,7 +519,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
     def get_seismograms_hybrid_source(self, sources, receiver,
                                       components=None,
                                       kind='displacement', dt=None,
-                                      kernelwidth=12):
+                                      kernelwidth=12,
+                                      return_obspy_stream=False):
 
         """
         Extract seismograms for a hybrid source (constructed from an outcome 
@@ -558,6 +559,10 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         data_summed = {}
 
         for _i, source in enumerate(sources.pointsources):
+
+            if source.dt is None or source.sliprate is None:
+                raise ValueError("Source has no source time function.")
+
             # Don't perform the diff/integration here, but after the
             # resampling later on.
             if isinstance(source, Source):
@@ -579,8 +584,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
             # Next lines "out of the comp-loop" relative to the other
             # reconvolutions
-            if source.dt is None or source.sliprate is None:
-                raise ValueError("Source has no source time function.")
 
             if STF_MAP[self.info.stf] not in [1]:
                 raise NotImplementedError(
@@ -683,20 +686,26 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                                     data=data_summed, comp=comp,
                                     dt_out=dt_out)
 
-        # Convert to an ObsPy Stream object.
-        st = Stream()
         band_code = get_band_code(dt_out)
-        for comp in components:
-            tr = Trace(data=data_summed[comp],
-                       header={"delta": dt_out,
-                               "station": receiver.station,
-                               "network": receiver.network,
-                               "location": receiver.location,
-                               "channel": "%sX%s" % (band_code, comp)})
-            st += tr
-        return st
+        if return_obspy_stream:
+            # Convert to an ObsPy Stream object.
+            st = Stream()
+            for comp in components:
+                tr = Trace(data=data_summed[comp],
+                           header={"delta": dt_out,
+                                   "station": receiver.station,
+                                   "network": receiver.network,
+                                   "location": receiver.location,
+                                   "channel": "%sX%s" % (band_code, comp)})
+                st += tr
+            return st
+        else:
+            data_summed["band_code"] = band_code
+            data_summed["delta"] = dt_out
 
-    def get_elastic_params(self, source, receivers, outfile):
+            return data_summed
+
+    def get_elastic_params(self, source, receiver):
         """
         Extract elastic parameters mu, lambda, xi, phi, eta 
         from an Instaseis database. Saves extracted data in a hdf5 file.
@@ -713,7 +722,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         if self.info.dump_type != 'displ_only':
             raise NotImplementedError
 
-        return self._get_elastic_params(source, receivers, outfile)
+        return self._get_elastic_params(source, receiver)
 
     def get_data_hybrid(self, source, receiver, dumpfields,
                         dumpcoords="spherical", coords_rotmat=None,
@@ -969,7 +978,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         raise NotImplementedError
 
     @abstractmethod
-    def _get_elastic_params(self, source, receivers, outfile):
+    def _get_elastic_params(self, source, receiver):
         raise NotImplementedError
 
     def _get_greens_seiscomp_sanity_checks(self, epicentral_distance_degree,
