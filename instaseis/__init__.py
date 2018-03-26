@@ -101,6 +101,6 @@ if __version__.startswith("0.0.0-tar/zipball"):  # pragma: no cover
 
 # NoQa
 from .source import Source, Receiver, ForceSource, FiniteSource, HybridSources
-from .hybrid import hybrid_generate_output, hybrid_prepare_inputs
-from .hybrid_parallel import hybrid_generate_output_parallel
+from .hybrid import hybrid_generate_output, hybrid_prepare_inputs, hybrid_get_elastic_params
+from .hybrid_parallel import hybrid_generate_output_parallel, hybrid_get_seismograms_parallel, hybrid_get_elastic_params_parallel
 from .rotations import *
