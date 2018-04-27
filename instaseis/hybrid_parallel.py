@@ -77,10 +77,12 @@ def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
 
 
 def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
-                                    bwd_db_path, bg_field_file=None,components=None,
+                                    bwd_db_path, bg_field_file=None,
+                                    components=None,
                                     kind='displacement', dt=None,
                                     filter_freqs=None,
                                     kernelwidth=12, return_obspy_stream=True):
+
     if rank == 0:
         f_coords = h5py.File(coordsfile, "r")
 
@@ -113,18 +115,26 @@ def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
         npoints_rank = comm.recv(source=0, tag=tag2)
         start_idx = comm.recv(source=0, tag=tag3)
 
+    bwd_db = open_db(bwd_db_path)
+
+    data = bwd_db.get_seismograms_hybrid_NEW(
+        fieldsfile, coordsfile, receiver, npoints_rank=npoints_rank,
+        start_idx=start_idx, components=components, kind=kind, dt=dt,
+        kernelwidth=kernelwidth, bg_field_file=bg_field_file)
+
+    """
     hybrid_src = HybridSources(fieldsfile=fieldsfile, coordsfile=coordsfile,
                                filter_freqs=filter_freqs,
                                npoints_rank=npoints_rank, start_idx=start_idx, 
                                bg_field_file=bg_field_file)
 
-    bwd_db = open_db(bwd_db_path)
 
     data = bwd_db.get_seismograms_hybrid_source(sources=hybrid_src,
                                                 receiver=receiver, dt=dt,
                                                 components=components,
                                                 kind=kind,
                                                 kernelwidth=kernelwidth)
+    """
 
     all_data = comm.gather(data, root=0)
 
@@ -161,7 +171,7 @@ def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
         return None
 
 
-def hybrid_get_elastic_params_parallel(source, coordsfile, db_path):
+def hybrid_get_elastic_params_parallel(coordsfile, db_path, source=None):
 
 
     if rank == 0:
@@ -191,6 +201,6 @@ def hybrid_get_elastic_params_parallel(source, coordsfile, db_path):
         npoints_rank = comm.recv(source=0, tag=tag2)
         start_idx = comm.recv(source=0, tag=tag3)
     
-    hybrid_get_elastic_params(source, coordsfile, db_path,
+    hybrid_get_elastic_params(coordsfile, db_path, source=source,
                               npoints_rank=npoints_rank,
                               start_idx=start_idx, comm=comm)

@@ -423,7 +423,7 @@ def hybrid_generate_output(source, inputs, coordinates,
     f_coords.close()
 
 
-def hybrid_get_elastic_params(source, inputfile, db_path,
+def hybrid_get_elastic_params(inputfile, db_path, source=None,
                               npoints_rank=None, start_idx=0, comm=None):
 
     print("Instaseis: Extracting elastic parameters....")
@@ -465,7 +465,7 @@ def hybrid_get_elastic_params(source, inputfile, db_path,
                                    ntimesteps))
 
     
-    """
+    """ 
     grp = f_in["Instaseis_medium_params"]
     dset_mu = grp["mu"]
     dset_rho = grp["rho"]
@@ -491,22 +491,39 @@ def hybrid_get_elastic_params(source, inputfile, db_path,
 
     database = open_db(db_path)
 
-    if coordinates_local:
-        receivers = _make_receivers(coordinates, coordinates_local,
-                                    rotmat=coords_rotmat,
-                                    radius_of_box_top=radius_of_box_top)
+    if source is None:
+        rec = Receiver(latitude=10.0, longitude=10.0)
+
+        if coordinates_local:
+            sources = _make_sources(coordinates, coordinates_local,
+                                        rotmat=coords_rotmat,
+                                        radius_of_box_top=radius_of_box_top)
+        else:
+            sources = _make_sources(coordinates, coordinates_local)
+
+        sources = _database_bounds_checks(sources, database)
+
     else:
-        receivers = _make_receivers(coordinates, coordinates_local)
+        if coordinates_local:
+            receivers = _make_receivers(coordinates, coordinates_local,
+                                        rotmat=coords_rotmat,
+                                        radius_of_box_top=radius_of_box_top)
+        else:
+            receivers = _make_receivers(coordinates, coordinates_local)
 
     # Check the bounds of the receivers vs the database
-    receivers = _database_bounds_checks(receivers, database)
+        receivers = _database_bounds_checks(receivers, database)
 
     buf_idx = 0
     for i in np.arange(npoints_rank):
         j = i - buf_idx * npoints_buf
 
-        receiver = receivers[start_idx+i]  # review do we need the +1?
-        data = database.get_elastic_params(source, receiver)
+        if source is not None:
+            data = database.get_elastic_params(source=source,
+                                               receiver=receivers[start_idx+i])
+        else:
+            data = database.get_elastic_params(source=sources[start_idx+i],
+                                               receiver=rec)
 
         mu_all[j] = data["mu"]
         rho_all[j] = data["rho"]
@@ -613,6 +630,34 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
         # f.write("lat: %f  lon: %f  depth: %f \n" %(lat, lon, dep))
     # f.close()
     return receivers
+
+
+def _make_sources(coordinates, coordinates_local=False, rotmat=None,
+                  radius_of_box_top=None):
+    sources = []
+    items = coordinates.shape[0]
+
+    if coordinates_local:
+        if rotmat is None or radius_of_box_top is None:
+            raise ValueError("Need a rotation matrix in local coordinates and"
+                             " the radius of the top of the box!")
+        coordinates[:, 2] += radius_of_box_top
+        # radius of the Earth OR radius of box top if at depth
+        coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
+            coordinates, rotmat)
+    # f = open("coordinates_spherical.txt", 'w')
+    for i in np.arange(items):
+        lat = 90.0 - coordinates[i, 0]
+        lon = coordinates[i, 1]
+        dep = (6371000.0 - coordinates[i, 2])
+        sources.append(Source(
+            latitude=lat,
+            longitude=lon,
+            depth_in_m=dep))
+
+        # f.write("lat: %f  lon: %f  depth: %f \n" %(lat, lon, dep))
+    # f.close()
+    return sources
 
 
 def _time_window_bounds_checks(time_window, path_to_db):

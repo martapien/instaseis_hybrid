@@ -29,10 +29,12 @@ from obspy.signal.util import next_pow_2
 from scipy.integrate import cumtrapz
 import scipy.signal
 
-from ..source import Source, ForceSource, Receiver
+from ..source import Source, ForceSource, Receiver, HybridSourceSingle
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq
-from ..rotations import hybrid_vector_tpr_to_local_cartesian, \
-    hybrid_tensor_tpr_to_local_cartesian
+from ..rotations import hybrid_vector_local_cartesian_to_tpr, \
+    hybrid_coord_transform_local_cartesian_to_tpr
+
+import h5py
 
 DEFAULT_MU = 32e9
 
@@ -375,6 +377,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         raise NotImplementedError
 
     @abstractmethod
+    def _get_seismograms_multiple(self, source, receiver,
+                                  components=("Z", "N", "E")):
+        raise NotImplementedError
+
+    @abstractmethod
     def _get_info(self):
         """
         Must return a dictionary with the following keys:
@@ -679,6 +686,292 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         # Integrate/differentiate here. No need to do it for every single
         # seismogram and stack the errors.
         n_derivative = KIND_MAP[kind]
+
+        if n_derivative:
+            for comp in data_summed.keys():
+                _diff_and_integrate(n_derivative=n_derivative,
+                                    data=data_summed, comp=comp,
+                                    dt_out=dt_out)
+
+        band_code = get_band_code(dt_out)
+        if return_obspy_stream:
+            # Convert to an ObsPy Stream object.
+            st = Stream()
+            for comp in components:
+                tr = Trace(data=data_summed[comp],
+                           header={"delta": dt_out,
+                                   "station": receiver.station,
+                                   "network": receiver.network,
+                                   "location": receiver.location,
+                                   "channel": "%sX%s" % (band_code, comp)})
+                st += tr
+            return st
+        else:
+            data_summed["band_code"] = band_code
+            data_summed["delta"] = dt_out
+
+            return data_summed
+
+    def get_seismograms_hybrid_NEW(self, fieldsfile, coordsfile, receiver,
+                                      components=None,
+                                      kind='displacement', dt=None,
+                                      kernelwidth=12,
+                                      return_obspy_stream=False,
+                                      bg_field_file=None,  npoints_rank=None,
+                                      start_idx=None):
+
+        """
+        Extract seismograms for a hybrid source (constructed from an outcome
+        of a local simulation) from a reciprocal Instaseis database.
+        :param sources: A collection of point sources.
+        :type sources: :class:`~instaseis.source.HybridSources`
+        :param receiver: The seismic receiver.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :type components: tuple of str, optional
+        :param components: Which components to calculate. Must be a tuple
+            containing any combination of ``"Z"``, ``"N"``, ``"E"``,
+            ``"R"``, and ``"T"``. Defaults to ``["Z", "N", "E"]`` for two
+            component databases, to ``["N", "E"]`` for horizontal only
+            databases, and to ``["Z"]`` for vertical only databases.
+        :type kind: str, optional
+        :param kind: The desired units of the seismogram:
+            ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the seismograms. Resampling is done
+            using a Lanczos kernel. If specified, the sampling rate must be
+            higher than the sampling rate of the local hybrid simulation.
+        :type kernelwidth: int, optional
+        :param kernelwidth: The width of the sinc kernel used for resampling in
+            terms of the original sampling interval. Best choose something
+            between 10 and 20.
+
+        :returns: Multi component hybrid source seismogram.
+        :rtype: :class:`obspy.core.stream.Stream`
+        """
+        if components is None:
+            components = self.default_components
+
+        if not self.info.is_reciprocal:
+            raise NotImplementedError
+
+        f_fields = h5py.File(fieldsfile, "r")
+        f_coords = h5py.File(coordsfile, "r")
+
+        if bg_field_file:
+            f_bg_field = h5py.File(bg_field_file, "r")
+        # review bg_field_file needs the same group name too!
+        if "spherical" in f_fields and "spherical" in f_coords:
+            local_fields = False
+            grp_fields = f_fields['spherical']
+            grp_coords = f_coords['spherical']
+            if bg_field_file:
+                grp_bg_field = f_bg_field['spherical']
+        elif "local" in f_fields and "local" in f_coords:
+            local_fields = True
+            grp_fields = f_fields['local']
+            grp_coords = f_coords['local']
+            rotmat = grp_coords.attrs['rotmat_xyz_loc_to_glob']
+            radius_of_box_top = grp_coords.attrs['radius_of_box_top'][0]
+            if type(radius_of_box_top) is np.ndarray:
+                radius_of_box_top = radius_of_box_top[0]
+            if bg_field_file:
+                grp_bg_field = f_bg_field['local']
+        else:
+            raise NotImplementedError("Only spherical or local groups "
+                                      "allowed. Both files must have the same "
+                                      "groups, i.e. be in the same "
+                                      "coordinates.")
+        if npoints_rank is None:
+            npoints = grp_coords.attrs['nb_points']
+        else:
+            npoints = npoints_rank
+
+        tpr = grp_coords['coordinates'][int(start_idx):int(
+            start_idx) + int(npoints), :]
+        normals = grp_coords['normals']
+        weights = grp_coords['gll_weights']
+        dt_stf = grp_fields.attrs['dt']
+        if type(dt_stf) is np.ndarray:
+            dt_stf = dt_stf[0]
+
+        if "local" in f_coords:
+            tpr[:, 2] += radius_of_box_top  # radius of the Earth
+            tpr = hybrid_coord_transform_local_cartesian_to_tpr(
+                tpr, rotmat)
+
+        mu_all = f_coords['Instaseis_medium_params/mu']
+        lbd_all = f_coords['Instaseis_medium_params/lambda']
+        xi_all = f_coords['Instaseis_medium_params/xi']
+        phi_all = f_coords['Instaseis_medium_params/phi']
+        eta_all = f_coords['Instaseis_medium_params/eta']
+
+        # When extracting from hdf5, dt is a float. When extracting from
+        # netcdf, dt is a numpy array of length 1.
+        if type(dt_stf) is np.ndarray:
+            dt_stf = dt_stf[0]
+
+        displ_all = grp_fields['displacement']
+        traction_all = None
+        strain_all = None
+        if bg_field_file:
+            velocity_bg_all = grp_bg_field['velocity']
+            stress_bg_all = grp_bg_field['stress']
+
+        if 'traction' in grp_fields:
+            traction_all = grp_fields['traction']
+        elif 'strain' in grp_fields:
+            strain_all = grp_fields['strain']
+        else:
+            ValueError("Need strains or tractions to repropagate field via "
+                       "hybrid sources.")
+
+        data_summed = {}
+        for j in np.arange(npoints):
+            i = j + int(start_idx)
+            n = np.array(normals[i, :], dtype=np.float64)
+            w = weights[i]
+
+            # review only transverse isotropy in this case?
+            elastic_params = {"mu":  mu_all[i], "lambda": lbd_all[i],
+                              "xi": xi_all[i], "phi": phi_all[i],
+                              "eta": eta_all[i], "fa_ani_thetal": 0.0,
+                              "fa_ani_phil": 0.0}
+            if bg_field_file:
+                sources = HybridSourceSingle(
+                     tpr[j, :], n, w, displ_all[i, :, :], elastic_params,
+                     dt_stf,
+                     velocity_bg=velocity_bg_all[i, :, :],
+                     stress_bg=stress_bg_all[i, :, :],
+                     strain=strain_all[i, :, :],
+                     traction=None, local_fields=local_fields, rotmat=rotmat)
+            else:
+                sources = HybridSourceSingle(
+                    tpr[j, :], n, w, displ_all[i, :, :], elastic_params, dt_stf,
+                    velocity_bg=None,
+                    stress_bg=None,
+                    strain=strain_all[i, :, :],
+                    traction=None, local_fields=local_fields, rotmat=rotmat)
+
+            # review the params have to be ready before this to build the
+            # sources... - awkward
+
+            params, data_all = self._get_seismograms_multiple(
+                        sources, receiver, components)
+
+            for _i, source in enumerate(sources.pointsources):
+
+                if source.dt is None or source.sliprate is None:
+                    raise ValueError("Source has no source time function.")
+                data = data_all[_i]
+                #np.savetxt("compN_point%i_source%i" % (j, _i), data['N'])
+                #np.savetxt("compE_point%i_source%i" % (j, _i), data['E'])
+                #np.savetxt("compZ_point%i_source%i" % (j, _i), data['Z'])
+                duration = (self.info.npts - 1) * self.info.dt
+                new_npts = int(round(duration / source.dt, 6)) + 1
+                new_nfft = int(next_pow_2(new_npts) * 2)
+
+                # Next lines "out of the comp-loop" relative to the other
+                # reconvolutions
+
+                if STF_MAP[self.info.stf] not in [1]:
+                    raise NotImplementedError(
+                        'deconvolution not implemented for stf %s'
+                        'reciprocal database for hybrid is required to have a '
+                        'gauss_0 or dirac_0 stf'
+                        % (self.info.stf))
+
+                stf_deconv_map = {
+                    0: self.info.sliprate,
+                    1: self.info.slip}
+
+                new_dt = source.dt
+                if new_dt > self.info.dt:  # we can only upsample the db
+                    raise ValueError("dt of the source not compatible")
+
+                stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
+
+                stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                                   old_start=0, old_dt=self.info.dt,
+                                                   new_start=0, new_dt=new_dt,
+                                                   new_npts=new_npts, a=12,
+                                                   window="blackman")
+
+                for comp in components:
+                    # We assume here that the sliprate is well-behaved,
+                    # e.g. zeros at the boundaries and no energy above the mesh
+                    # resolution.
+                    stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
+
+                    stf_conv_f = np.fft.rfft(source.sliprate,
+                                             n=new_nfft)
+                    data_new = lanczos_interpolation(data=data[comp],
+                                                 old_start=0, old_dt=self.info.dt,
+                                                 new_start=0, new_dt=new_dt,
+                                                 new_npts=new_npts, a=12,
+                                                 window="blackman")
+
+                    # Apply a 5 percent, at least 5 samples taper at the end.
+                    # The first sample is guaranteed to be zero in any case.
+                    tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
+                    taper = np.ones_like(data_new)
+                    taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
+                    dataf = np.fft.rfft(taper * data_new, n=new_nfft)
+
+                    # Ensure numerical stability by not dividing with zero.
+                    f = stf_conv_f
+                    _l = np.abs(stf_deconv_f)
+                    _idx = np.where(_l > 0.0)
+                    f[_idx] /= stf_deconv_f[_idx]
+                    f[_l == 0] = 0 + 0j
+
+                    data[comp] = np.fft.irfft(dataf * f)[:new_npts]
+
+
+                for comp in components:
+                    if comp in data_summed:
+                        data_summed[comp] += data[comp]
+                    else:
+                        data_summed[comp] = data[comp]
+
+        if dt is not None and abs(dt - new_dt) > 1e-7:
+            if dt > new_dt:
+                raise ValueError("We can only upsample the result.")
+            for comp in components:
+                # We don't need to align a sample to the peak of the source
+                # time function here.
+                new_npts = int(round((len(data_summed[comp]) - 1) *
+                                     new_dt / dt, 6) + 1)
+                data_summed[comp] = lanczos_interpolation(
+                    data=np.require(data_summed[comp],
+                                    requirements=["C"]),
+                    old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                # The resampling assumes zeros outside the data range. This
+                # does not introduce any errors at the beginning as the data is
+                # actually zero there but it does affect the end. We will
+                # remove all samples that are affected by the boundary
+                # conditions here.
+                #
+                # Also don't cut it for the "identify" interpolation which is
+                # important for testing.
+                if round(dt / new_dt, 6) != 1.0:
+                    affected_area = kernelwidth * new_dt
+                    data_summed[comp] = \
+                        data_summed[comp][
+                        :-int(np.ceil(affected_area / dt))]
+
+        if dt is None:
+            dt_out = new_dt
+        elif abs(dt - new_dt) < 1e-7:
+            dt_out = new_dt
+        else:
+            dt_out = dt
+
+        # Integrate/differentiate here. No need to do it for every single
+        # seismogram and stack the errors.
+        n_derivative = KIND_MAP[kind]
+
+        print(n_derivative)
 
         if n_derivative:
             for comp in data_summed.keys():
