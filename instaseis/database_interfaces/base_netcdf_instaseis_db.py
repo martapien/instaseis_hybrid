@@ -162,6 +162,14 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def _get_data_multiple(self, source, receiver, components, coordinates,
+                  element_info):
+        """
+        Has to be implemented by each implementation.
+        """
+        raise NotImplementedError
+
     def _get_seismograms(self, source, receiver, components=("Z", "N", "E")):
         """
         Extract seismograms from a netCDF based Instaseis database.
@@ -192,6 +200,39 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
         return self._get_data(
             source=source, receiver=receiver, components=components,
+            coordinates=coordinates, element_info=element_info)
+
+    def _get_seismograms_multiple(self, sources, receiver,
+                                  components=("Z", "N", "E")):
+        """
+        Extract seismograms from a netCDF based Instaseis database.
+
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param source: The source.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :param receiver: The receiver.
+        :type components: tuple
+        :param components: The requests components. Any combinations of
+            ``"Z"``, ``"N"``, ``"E"``, ``"R"``, and ``"T"``
+        """
+        if self.info.is_reciprocal:
+            a, b = sources[0], receiver
+        else:
+            a, b = receiver, sources[0]
+
+        rotmesh_s, rotmesh_phi, rotmesh_z = rotations.rotate_frame_rd(
+            a.x(planet_radius=self.info.planet_radius),
+            a.y(planet_radius=self.info.planet_radius),
+            a.z(planet_radius=self.info.planet_radius),
+            b.longitude, b.colatitude)
+
+        coordinates = Coordinates(s=rotmesh_s, phi=rotmesh_phi, z=rotmesh_z)
+
+        element_info = self._get_element_info(coordinates=coordinates)
+
+        return self._get_data_multiple(
+            sources=sources, receiver=receiver, components=components,
             coordinates=coordinates, element_info=element_info)
 
     def _get_strain_interp(self, mesh, id_elem, gll_point_ids, G, GT,
@@ -272,7 +313,12 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
             mesh.strain_buffer.add(id_elem, strain)
         else:
             strain = mesh.strain_buffer.get(id_elem)
-
+        """
+        if mesh.excitation_type == "monopole":
+            np.save("strain_z_id_%i.npy" % (id_elem), strain)
+        if mesh.excitation_type == "dipole":
+            np.save("strain_x_id_%i.npy" % (id_elem), strain)
+        """
         final_strain = np.empty((strain.shape[0], 6), order="F")
 
         for i in range(6):

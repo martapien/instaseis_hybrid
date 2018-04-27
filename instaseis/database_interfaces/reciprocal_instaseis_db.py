@@ -277,6 +277,201 @@ class ReciprocalInstaseisDB(BaseNetCDFInstaseisDB):
 
         return data
 
+    def _get_data_multiple(self, sources, receiver, components, coordinates,
+                  element_info):
+        ei = element_info
+        # Collect data arrays and mu in a dictionary.
+        data_all = []
+
+        mesh = self.parsed_mesh.f["Mesh"]
+
+        if self.info.dump_type != 'displ_only':
+            raise ValueError("Force sources only in displ_only mode")
+
+        # Get params
+        if not self.read_on_demand:
+            mesh_mu = self.parsed_mesh.mesh_mu
+            mesh_rho = self.parsed_mesh.mesh_rho
+            mesh_lambda = self.parsed_mesh.mesh_lambda
+            mesh_xi = self.parsed_mesh.mesh_xi
+            mesh_phi = self.parsed_mesh.mesh_phi
+            mesh_eta = self.parsed_mesh.mesh_eta
+
+        else:
+            mesh_mu = mesh["mesh_mu"]
+            mesh_rho = mesh["mesh_rho"]
+            mesh_lambda = mesh["mesh_lambda"]
+            mesh_xi = mesh["mesh_xi"]
+            mesh_phi = mesh["mesh_phi"]
+            mesh_eta = mesh["mesh_eta"]
+
+        if self.info.dump_type == "displ_only":
+            npol = self.info.spatial_order
+            mu = mesh_mu[ei.gll_point_ids[npol // 2, npol // 2]]
+            rho = mesh_rho[ei.gll_point_ids[npol // 2, npol // 2]]
+            lbda = mesh_lambda[ei.gll_point_ids[npol // 2, npol // 2]]
+            xi = mesh_xi[ei.gll_point_ids[npol // 2, npol // 2]]
+            phi = mesh_phi[ei.gll_point_ids[npol // 2, npol // 2]]
+            eta = mesh_eta[ei.gll_point_ids[npol // 2, npol // 2]]
+        else:  # shouldn't happen
+            raise ValueError
+
+        params = {'mu': mu, 'rho': rho, 'lambda': lbda, 'xi': xi, 'phi': phi,
+                  'eta': eta}
+
+        fac_1_map = {"N": np.cos,
+                     "E": np.sin}
+        fac_2_map = {"N": lambda x: - np.sin(x),
+                     "E": np.cos}
+
+        if self.info.dump_type == 'displ_only':
+            if ei.axis:
+                G = self.parsed_mesh.G2
+                GT = self.parsed_mesh.G1T
+            else:
+                G = self.parsed_mesh.G2
+                GT = self.parsed_mesh.G2T
+        else:  # shouldn't happen
+            raise ValueError
+
+        strain_x = None
+        strain_z = None
+
+        # Minor optimization: Only read if actually requested.
+        if "Z" in components:
+            # for moment tensor sources
+            strain_z = self._get_strain_interp(
+                self.meshes.pz, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+            # for force sources
+            displ_z = self._get_displacement(self.meshes.pz, ei.id_elem,
+                                             ei.gll_point_ids,
+                                             ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi,
+                                             ei.eta)
+
+        if any(comp in components for comp in ['N', 'E', 'R', 'T']):
+            # for moment tensor sources
+            strain_x = self._get_strain_interp(
+                self.meshes.px, ei.id_elem, ei.gll_point_ids, G, GT,
+                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
+                ei.eltype, ei.axis, ei.xi, ei.eta)
+            # for force sources
+            displ_x = self._get_displacement(self.meshes.px, ei.id_elem,
+                                             ei.gll_point_ids,
+                                             ei.col_points_xi,
+                                             ei.col_points_eta, ei.xi,
+                                             ei.eta)
+
+        for _i, source in enumerate(sources.pointsources):
+            data = {}
+            if isinstance(source, Source):
+
+                mij = rotations \
+                    .rotate_symm_tensor_voigt_xyz_src_to_xyz_earth(
+                        source.tensor_voigt, np.deg2rad(source.longitude),
+                        np.deg2rad(source.colatitude))
+                mij = rotations \
+                    .rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
+                        mij, np.deg2rad(receiver.longitude),
+                        np.deg2rad(receiver.colatitude))
+                mij = rotations.rotate_symm_tensor_voigt_xyz_to_src(
+                    mij, coordinates.phi)
+                mij /= self.parsed_mesh.amplitude
+
+                if "Z" in components:
+                    final = np.zeros(strain_z.shape[0], dtype="float64")
+                    for i in range(3):
+                        final += mij[i] * strain_z[:, i]
+                    final += 2.0 * mij[4] * strain_z[:, 4]
+                    data["Z"] = final
+
+                if "R" in components:
+                    final = np.zeros(strain_x.shape[0], dtype="float64")
+                    final -= strain_x[:, 0] * mij[0] * 1.0
+                    final -= strain_x[:, 1] * mij[1] * 1.0
+                    final -= strain_x[:, 2] * mij[2] * 1.0
+                    final -= strain_x[:, 4] * mij[4] * 2.0
+                    data["R"] = final
+
+                if "T" in components:
+                    final = np.zeros(strain_x.shape[0], dtype="float64")
+                    final += strain_x[:, 3] * mij[3] * 2.0
+                    final += strain_x[:, 5] * mij[5] * 2.0
+                    data["T"] = final
+
+                for comp in ["E", "N"]:
+                    if comp not in components:
+                        continue
+
+                    fac_1 = fac_1_map[comp](coordinates.phi)
+                    fac_2 = fac_2_map[comp](coordinates.phi)
+
+                    final = np.zeros(strain_x.shape[0], dtype="float64")
+                    final += strain_x[:, 0] * mij[0] * 1.0 * fac_1
+                    final += strain_x[:, 1] * mij[1] * 1.0 * fac_1
+                    final += strain_x[:, 2] * mij[2] * 1.0 * fac_1
+                    final += strain_x[:, 3] * mij[3] * 2.0 * fac_2
+                    final += strain_x[:, 4] * mij[4] * 2.0 * fac_1
+                    final += strain_x[:, 5] * mij[5] * 2.0 * fac_2
+                    if comp == "N":
+                        final *= -1.0
+                    data[comp] = final
+
+                data_all.append(data)
+
+            elif isinstance(source, ForceSource):
+
+                force = rotations.rotate_vector_xyz_src_to_xyz_earth(
+                    source.force_tpr, np.deg2rad(source.longitude),
+                    np.deg2rad(source.colatitude))
+                force = rotations.rotate_vector_xyz_earth_to_xyz_src(
+                    force, np.deg2rad(receiver.longitude),
+                    np.deg2rad(receiver.colatitude))
+                force = rotations.rotate_vector_xyz_to_src(
+                    force, coordinates.phi)
+                force /= self.parsed_mesh.amplitude
+
+                if "Z" in components:
+                    final = np.zeros(displ_z.shape[0], dtype="float64")
+                    final += displ_z[:, 0] * force[0]
+                    final += displ_z[:, 2] * force[2]
+                    data["Z"] = final
+
+                if "R" in components:
+                    final = np.zeros(displ_x.shape[0], dtype="float64")
+                    final += displ_x[:, 0] * force[0]
+                    final += displ_x[:, 2] * force[2]
+                    data["R"] = final
+
+                if "T" in components:
+                    final = np.zeros(displ_x.shape[0], dtype="float64")
+                    final += displ_x[:, 1] * force[1]
+                    data["T"] = final
+
+                for comp in ["E", "N"]:
+                    if comp not in components:
+                        continue
+
+                    fac_1 = fac_1_map[comp](coordinates.phi)
+                    fac_2 = fac_2_map[comp](coordinates.phi)
+
+                    final = np.zeros(displ_x.shape[0], dtype="float64")
+                    final += displ_x[:, 0] * force[0] * fac_1
+                    final += displ_x[:, 1] * force[1] * fac_2
+                    final += displ_x[:, 2] * force[2] * fac_1
+                    if comp == "N":
+                        final *= -1.0
+                    data[comp] = final
+
+                data_all.append(data)
+
+            else:
+                raise NotImplementedError
+
+        return params, data_all
+
     def _get_params(self, element_info):
 
         ei = element_info
