@@ -428,7 +428,8 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
                                             G, GT, col_points_xi,
                                             col_points_eta, corner_points,
                                             eltype, axis, xi, eta):
-        if id_elem not in mesh.strain_buffer:
+        if id_elem not in mesh.strain_buffer or \
+                        id_elem not in mesh.displ_buffer:
             # Single precision in the NetCDF files but the later interpolation
             # routines require double precision. Assignment to this array will
             # force a cast.
@@ -496,12 +497,13 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
                 "dipole": sem_derivatives.strain_dipole_td,
                 "quadpole": sem_derivatives.strain_quadpole_td}
 
+            mesh.displ_buffer.add(id_elem, utemp)
+
             strain = strain_fct_map[mesh.excitation_type](
                 utemp, G, GT, col_points_xi, col_points_eta, mesh.npol,
                 mesh.ndumps, corner_points, eltype, axis)
 
             mesh.strain_buffer.add(id_elem, strain)
-            mesh.displ_buffer.add(id_elem, utemp)
         else:
             strain = mesh.strain_buffer.get(id_elem)
             utemp = mesh.displ_buffer.get(id_elem)

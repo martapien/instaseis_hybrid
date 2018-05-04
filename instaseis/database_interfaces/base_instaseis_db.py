@@ -863,9 +863,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 if source.dt is None or source.sliprate is None:
                     raise ValueError("Source has no source time function.")
                 data = data_all[_i]
-                #np.savetxt("compN_point%i_source%i" % (j, _i), data['N'])
-                #np.savetxt("compE_point%i_source%i" % (j, _i), data['E'])
-                #np.savetxt("compZ_point%i_source%i" % (j, _i), data['Z'])
+
                 duration = (self.info.npts - 1) * self.info.dt
                 new_npts = int(round(duration / source.dt, 6)) + 1
                 new_nfft = int(next_pow_2(new_npts) * 2)

@@ -279,7 +279,7 @@ class ReciprocalMergedInstaseisDB(BaseNetCDFInstaseisDB):
                 GT = self.parsed_mesh.G2T
         else:  # shouldn't happen
             raise ValueError
-        """
+
         displ_x, displ_z, strain_x, strain_z = \
             self._get_displacement_and_strain_interp(
             ei.id_elem, ei.gll_point_ids, G, GT,
@@ -294,7 +294,7 @@ class ReciprocalMergedInstaseisDB(BaseNetCDFInstaseisDB):
         displ_x, displ_z = self._get_displacement(
             ei.id_elem, ei.gll_point_ids, ei.col_points_xi,
             ei.col_points_eta, ei.xi, ei.eta)
-
+        """
         for _i, source in enumerate(sources.pointsources):
             data = {}
             if isinstance(source, Source):
@@ -527,11 +527,12 @@ class ReciprocalMergedInstaseisDB(BaseNetCDFInstaseisDB):
         return final_displacement_x, final_displacement_z
 
     def _get_displacement_and_strain_interp(self, id_elem, gll_point_ids, G, GT,
-                          col_points_xi, col_points_eta, corner_points,
-                           eltype, axis, xi, eta):
+                                            col_points_xi, col_points_eta,
+                                            corner_points, eltype, axis, xi,
+                                            eta):
         mesh = self.meshes.merged
-        if id_elem not in mesh.strain_buffer and id_elem not in \
-                mesh.displ_buffer:
+        if id_elem not in mesh.strain_buffer \
+                or id_elem not in mesh.displ_buffer:
             utemp = self._get_and_reorder_utemp(id_elem)
 
             strain_fct_map = {
@@ -544,22 +545,15 @@ class ReciprocalMergedInstaseisDB(BaseNetCDFInstaseisDB):
 
             # Horizontal component is available if we have 3 or 5 components.
             if utemp.shape[-1] >= 3:
-                final_displacement_x = np.empty((utemp.shape[0], 3), order="F")
                 utemp_x = utemp[:, :, :, :3]
                 utemp_x = np.require(utemp_x, requirements=["F"],
                                      dtype=np.float64)
-                #np.save("strain_utemp_x_id_%i.npy" % (id_elem), utemp_x)
-                for i in range(3):
-                    final_displacement_x[:, i] = \
-                        spectral_basis.lagrange_interpol_2D_td(
-                            col_points_xi, col_points_eta,
-                            utemp_x[:, :, :, i], xi, eta)
                 strain_x = strain_fct_map["dipole"](
                     utemp_x, G, GT, col_points_xi, col_points_eta,
                     mesh.npol, mesh.ndumps, corner_points, eltype, axis)
             else:
-                strain_x = None
-                final_displacement_x = None
+                # Hybrid repropagation needs both components.
+                raise NotImplementedError
 
             # Vertical component is available if we have 2 or 5 components.
             if utemp.shape[-1] in (2, 5):
@@ -579,41 +573,36 @@ class ReciprocalMergedInstaseisDB(BaseNetCDFInstaseisDB):
                     utemp_z[:, :, :, 1][:] = 0
                     utemp_z = np.require(utemp_z, requirements=["F"],
                                          dtype=np.float64)
-                final_displacement_z = np.empty((utemp_z.shape[0], 3),
-                                                order="F")
-                for i in range(3):
-                    final_displacement_z[:, i] = \
-                        spectral_basis.lagrange_interpol_2D_td(
-                            col_points_xi, col_points_eta,
-                            utemp_z[:, :, :, i], xi, eta)
-                #np.save("strain_utemp_z_id_%i.npy" % (id_elem), utemp_z)
 
                 strain_z = strain_fct_map["monopole"](
                     utemp_z, G, GT, col_points_xi, col_points_eta,
                     mesh.npol, mesh.ndumps, corner_points, eltype, axis)
-                np.save("strain_z_id_%i.npy" % (id_elem), utemp_z)
-
             else:
-                strain_z = None
-                final_displacement_z = None
+                # Hybrid repropagation needs both components.
+                raise NotImplementedError
 
+            mesh.displ_buffer.add(id_elem, (utemp_x, utemp_z))
             mesh.strain_buffer.add(id_elem, (strain_x, strain_z))
-            mesh.displ_buffer.add(id_elem, (final_displacement_x,
-                                                   final_displacement_z))
 
         else:
             strain_x, strain_z = mesh.strain_buffer.get(id_elem)
-            final_displacement_x, final_displacement_z = \
-                mesh.displ_buffer.get(id_elem)
+            utemp_x, utemp_z = mesh.displ_buffer.get(id_elem)
 
-        np.save("strain_z_id_%i.npy" % (id_elem), strain_x)
-        np.save("strain_x_id_%i.npy" % (id_elem), strain_z)
+        final_displacement_x = np.empty((utemp_x.shape[0], 3), order="F")
+        final_displacement_z = np.empty((utemp_z.shape[0], 3), order="F")
+        for i in range(3):
+            final_displacement_z[:, i] = \
+                spectral_basis.lagrange_interpol_2D_td(
+                    col_points_xi, col_points_eta,
+                    utemp_z[:, :, :, i], xi, eta)
+            final_displacement_x[:, i] = \
+                spectral_basis.lagrange_interpol_2D_td(
+                    col_points_xi, col_points_eta,
+                    utemp_x[:, :, :, i], xi, eta)
 
         all_strains = {}
+
         for name, strain in (("strain_x", strain_x), ("strain_z", strain_z)):
-            if strain is None:
-                all_strains[name] = None
-                continue
             final_strain = np.empty((strain.shape[0], 6), order="F")
 
             for i in range(6):
