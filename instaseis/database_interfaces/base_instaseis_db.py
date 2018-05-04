@@ -857,6 +857,34 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
             params, data_all = self._get_seismograms_multiple(
                         sources, receiver, components)
+            duration = (self.info.npts - 1) * self.info.dt
+            new_npts = int(round(duration / sources.pointsources[0].dt, 6)) + 1
+            new_nfft = int(next_pow_2(new_npts) * 2)
+
+            if STF_MAP[self.info.stf] not in [1]:
+                raise NotImplementedError(
+                    'deconvolution not implemented for stf %s'
+                    'reciprocal database for hybrid is required to have a '
+                    'gauss_0 or dirac_0 stf'
+                    % (self.info.stf))
+
+            stf_deconv_map = {
+                0: self.info.sliprate,
+                1: self.info.slip}
+
+            new_dt = sources.pointsources[0].dt
+            if new_dt > self.info.dt:  # we can only upsample the db
+                raise ValueError("dt of the source not compatible")
+
+            stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
+
+            stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                               old_start=0,
+                                               old_dt=self.info.dt,
+                                               new_start=0, new_dt=new_dt,
+                                               new_npts=new_npts, a=12,
+                                               window="blackman")
+            stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
 
             for _i, source in enumerate(sources.pointsources):
 
@@ -864,41 +892,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     raise ValueError("Source has no source time function.")
                 data = data_all[_i]
 
-                duration = (self.info.npts - 1) * self.info.dt
-                new_npts = int(round(duration / source.dt, 6)) + 1
-                new_nfft = int(next_pow_2(new_npts) * 2)
-
-                # Next lines "out of the comp-loop" relative to the other
-                # reconvolutions
-
-                if STF_MAP[self.info.stf] not in [1]:
-                    raise NotImplementedError(
-                        'deconvolution not implemented for stf %s'
-                        'reciprocal database for hybrid is required to have a '
-                        'gauss_0 or dirac_0 stf'
-                        % (self.info.stf))
-
-                stf_deconv_map = {
-                    0: self.info.sliprate,
-                    1: self.info.slip}
-
-                new_dt = source.dt
-                if new_dt > self.info.dt:  # we can only upsample the db
-                    raise ValueError("dt of the source not compatible")
-
-                stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
-
-                stf_deconv = lanczos_interpolation(data=stf_deconv,
-                                                   old_start=0, old_dt=self.info.dt,
-                                                   new_start=0, new_dt=new_dt,
-                                                   new_npts=new_npts, a=12,
-                                                   window="blackman")
-
                 for comp in components:
                     # We assume here that the sliprate is well-behaved,
                     # e.g. zeros at the boundaries and no energy above the mesh
                     # resolution.
-                    stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
+                    # stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
 
                     stf_conv_f = np.fft.rfft(source.sliprate,
                                              n=new_nfft)
@@ -923,7 +921,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     f[_l == 0] = 0 + 0j
 
                     data[comp] = np.fft.irfft(dataf * f)[:new_npts]
-
 
                 for comp in components:
                     if comp in data_summed:
