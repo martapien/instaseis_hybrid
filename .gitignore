@@ -11,3 +11,8 @@ instaseis/RELEASE-VERSION
 dist/
 advanced_server_configuration_example/event_db.json
 advanced_server_configuration_example/station_list.txt
+.idea
+instaseis/.idea/
+instaseis/COPY/
+instaseis/__pycache__/
+instaseis/tests/test_hybrid.py
