@@ -22,7 +22,7 @@ from instaseis.helpers import elliptic_to_geocentric_latitude
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
-def test_parse_STATIONS_file(tmpdir):
+def test_parse_stations_file(tmpdir):
     """
     Tests parsing from a STATIONS file. tmpdir is a pytest fixture.
     """
@@ -47,7 +47,7 @@ def test_parse_STATIONS_file(tmpdir):
            (elliptic_to_geocentric_latitude(20.0), 30.0, "AA", "BBK")
 
 
-def test_parse_StationXML():
+def test_parse_stationxml():
     filename = os.path.join(DATA, "TA.Q56A..BH.xml")
     receivers = Receiver.parse(filename)
 
@@ -216,7 +216,7 @@ def test_error_handling_when_parsing_station_files(tmpdir):
     with pytest.raises(ReceiverParseError) as err:
         Receiver.parse(p)
     assert err.value.args[0] == ("The coordinates of the channels of station "
-                                 "'BW.FURT' are not identical")
+                                 "'BW.FURT' are not identical.")
 
     # Same thing but this time with a file.
     tmpfile = os.path.join(tmpdir.strpath, "temp.seed")
@@ -224,7 +224,7 @@ def test_error_handling_when_parsing_station_files(tmpdir):
     with pytest.raises(ReceiverParseError) as err:
         Receiver.parse(tmpfile)
     assert err.value.args[0] == ("The coordinates of the channels of station "
-                                 "'BW.FURT' are not identical")
+                                 "'BW.FURT' are not identical.")
 
     # Parsing random string.
     with pytest.raises(ValueError) as err:

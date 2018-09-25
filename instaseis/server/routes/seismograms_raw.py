@@ -7,6 +7,7 @@
     GNU Lesser General Public License, Version 3 [non-commercial/academic use]
     (http://www.gnu.org/copyleft/lgpl.html)
 """
+import concurrent.futures
 import io
 
 import numpy as np
@@ -15,11 +16,11 @@ import tornado.web
 
 from ... import Source, ForceSource, Receiver
 from ..instaseis_request import InstaseisTimeSeriesHandler
-from ..util import run_async
+
+executor = concurrent.futures.ThreadPoolExecutor(12)
 
 
-@run_async
-def _get_seismogram(db, source, receiver, components, callback):
+def _get_seismogram(db, source, receiver, components):
     """
     Extract a seismogram from the passed db and write it either to a MiniSEED
     or a SACZIP file.
@@ -42,7 +43,7 @@ def _get_seismogram(db, source, receiver, components, callback):
     except Exception:
         msg = ("Could not extract seismogram. Make sure, the components "
                "are valid, and the depth settings are correct.")
-        callback(tornado.web.HTTPError(400, log_message=msg, reason=msg))
+        return tornado.web.HTTPError(400, log_message=msg, reason=msg)
         return
 
     try:
@@ -51,8 +52,7 @@ def _get_seismogram(db, source, receiver, components, callback):
             data=data, dt_out=db.info.dt, starttime=source.origin_time)
     except Exception:
         msg = ("Could not convert seismogram to a Stream object.")
-        callback(tornado.web.HTTPError(500, log_message=msg, reason=msg))
-        return
+        return tornado.web.HTTPError(500, log_message=msg, reason=msg)
 
     # Half the filesize but definitely sufficiently accurate.
     for tr in st:
@@ -62,7 +62,7 @@ def _get_seismogram(db, source, receiver, components, callback):
         st.write(fh, format="mseed")
         fh.seek(0, 0)
         binary_data = fh.read()
-    callback((binary_data, st[0].stats.instaseis.mu))
+    return binary_data, st[0].stats.instaseis.mu
 
 
 class RawSeismogramsHandler(InstaseisTimeSeriesHandler):
@@ -141,7 +141,7 @@ class RawSeismogramsHandler(InstaseisTimeSeriesHandler):
                                     m_pp=args.mpp, m_rt=args.mrt,
                                     m_rp=args.mrp, m_tp=args.mtp,
                                     origin_time=args.origintime)
-                except:
+                except Exception:
                     msg = ("Could not construct moment tensor source with "
                            "passed parameters. Check parameters for sanity.")
                     raise tornado.web.HTTPError(400, log_message=msg,
@@ -155,7 +155,7 @@ class RawSeismogramsHandler(InstaseisTimeSeriesHandler):
                         depth_in_m=args.sourcedepthinmeters,
                         strike=args.strike, dip=args.dip, rake=args.rake,
                         M0=args.M0, origin_time=args.origintime)
-                except:
+                except Exception:
                     msg = ("Could not construct the source from the passed "
                            "strike/dip/rake parameters. Check parameter for "
                            "sanity.")
@@ -170,7 +170,7 @@ class RawSeismogramsHandler(InstaseisTimeSeriesHandler):
                                          f_r=args.fr, f_t=args.ft,
                                          f_p=args.fp,
                                          origin_time=args.origintime)
-                except:
+                except Exception:
                     msg = ("Could not construct force source with passed "
                            "parameters. Check parameters for sanity.")
                     raise tornado.web.HTTPError(400, log_message=msg,
@@ -191,12 +191,12 @@ class RawSeismogramsHandler(InstaseisTimeSeriesHandler):
                                 station=args.stationcode,
                                 location=args.locationcode,
                                 depth_in_m=args.receiverdepthinmeters)
-        except:
+        except Exception:
             msg = ("Could not construct receiver with passed parameters. "
                    "Check parameters for sanity.")
             raise tornado.web.HTTPError(400, log_message=msg, reason=msg)
 
-        response = yield tornado.gen.Task(
+        response = yield executor.submit(
             _get_seismogram, db=self.application.db, source=source,
             receiver=receiver, components=components)
 

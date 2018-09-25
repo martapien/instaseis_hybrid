@@ -32,7 +32,7 @@ USGS_PARAM_FILE2 = os.path.join(DATA, "chile.param")
 USGS_PARAM_FILE_EMPTY = os.path.join(DATA, "empty.param")
 
 
-def test_parse_CMTSOLUTIONS_file(tmpdir):
+def test_parse_cmtsolutions_file(tmpdir):
     """
     Tests parsing from a CMTSOLUTIONS file.
     """
@@ -86,7 +86,7 @@ def _assert_src(src):
     assert src.origin_time == obspy.UTCDateTime("2010-04-11T22:08:12.800000Z")
 
 
-def test_parse_QuakeML():
+def test_parse_quakeml():
     """
     Tests parsing from a QuakeML file.
     """
@@ -152,13 +152,13 @@ def test_parse_usgs_param_file():
     # single segment file
     finitesource = FiniteSource.from_usgs_param_file(USGS_PARAM_FILE1)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   7.9374427577095901)
+                                   7.87077609)
     assert finitesource.npointsources == 121
 
     # multi segment file
     finitesource = FiniteSource.from_usgs_param_file(USGS_PARAM_FILE2)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   8.26413197488)
+                                   8.1974653082088)
     assert finitesource.npointsources == 400
 
 
@@ -169,37 +169,37 @@ def test_parse_usgs_param_file_from_bytes_io_and_open_files():
     with io.open(USGS_PARAM_FILE1, "rb") as fh:
         finitesource = FiniteSource.from_usgs_param_file(fh)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   7.9374427577095901)
+                                   7.8707760910429236)
     assert finitesource.npointsources == 121
 
     with io.open(USGS_PARAM_FILE1, "rb") as fh:
         with io.BytesIO(fh.read()) as buf:
             finitesource = FiniteSource.from_usgs_param_file(buf)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   7.9374427577095901)
+                                   7.87077609)
     assert finitesource.npointsources == 121
 
     with io.open(USGS_PARAM_FILE2, "rb") as fh:
         finitesource = FiniteSource.from_usgs_param_file(fh)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   8.26413197488)
+                                   8.1974653082088)
     assert finitesource.npointsources == 400
 
     with io.open(USGS_PARAM_FILE2, "rb") as fh:
         with io.BytesIO(fh.read()) as buf:
             finitesource = FiniteSource.from_usgs_param_file(buf)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   8.26413197488)
+                                   8.19746530820887)
     assert finitesource.npointsources == 400
 
 
-def test_Haskell():
+def test_haskell():
     """
     Tests Haskell source.
     """
     latitude, longitude, depth_in_m = 89.9999, 0., 10000.
     strike, dip, rake = 90., 90., 0.
-    M0 = 1e20
+    M0 = 1e20  # NOQA
     fault_length, fault_width = 1000e3, 200.
     rupture_velocity = 1000.
     nl, nw = 3, 3
@@ -207,7 +207,7 @@ def test_Haskell():
         latitude, longitude, depth_in_m, strike, dip, rake, M0, fault_length,
         fault_width, rupture_velocity, nl=nl, nw=nw)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   7.33333333333333)
+                                   7.26666666666)
 
     # Should raise an error if above ground.
     with pytest.raises(ValueError) as err:
@@ -222,7 +222,7 @@ def test_Haskell():
         latitude, longitude, depth_in_m, strike, dip, rake, M0, fault_length,
         fault_width, rupture_velocity, nl=nl, nw=nw, trise=1.0, tfall=1.0)
     np.testing.assert_almost_equal(finitesource.moment_magnitude,
-                                   7.33333333333333)
+                                   7.26666666666666666)
 
 
 def test_resample_stf():
@@ -274,31 +274,31 @@ def test_min_max_functions():
     assert finitesource.rupture_duration == 222.22222
 
 
-def test_M0():
+def test_m0():
     """
     Tests computation of scalar Moment.
     """
     strike = 10.
     dip = 20.
     rake = 30.
-    M0 = 1e16
-    source = Source.from_strike_dip_rake(0., 0., 0., strike, dip, rake, M0)
+    m0 = 1e16
+    source = Source.from_strike_dip_rake(0., 0., 0., strike, dip, rake, m0)
 
-    assert source.M0 == M0
+    assert source.M0 == m0
 
 
 def test_moment2magnitude():
     """
     Tests computation of magnitude
     """
-    M0 = 1e22
-    Mw = moment2magnitude(M0)
-    M0_calc = magnitude2moment(Mw)
+    m0 = 1e22
+    mw = moment2magnitude(m0)
+    m0_calc = magnitude2moment(mw)
 
-    assert M0_calc == M0
+    assert m0_calc == m0
 
 
-def test_M0_finite_source():
+def test_m0_finite_source():
     """
     Tests computation of scalar Moment.
     """
@@ -308,7 +308,7 @@ def test_M0_finite_source():
     np.testing.assert_allclose(np.array([finitesource.M0]), np.array([3.2e20]))
 
 
-def test_CMT_finite_source():
+def test_cmt_finite_source():
     """
     Tests computation of CMT solution
     """
@@ -498,6 +498,27 @@ def test_sliprate_convenience_methods_finite_source():
     np.testing.assert_allclose(np.ones(5), src.sliprate)
 
 
+def test_sliprate_convenience_methods_force_source():
+    """
+    Tests some convenience methods of sliprates for force sources.
+    """
+    src = ForceSource(latitude=0.0, longitude=90.0)
+    src.set_sliprate_dirac(2.0, 5)
+    np.testing.assert_allclose(np.array([0.5, 0, 0, 0, 0]), src.sliprate)
+
+    src = ForceSource(latitude=0.0, longitude=90.0)
+    src.set_sliprate_lp(2.0, 5, 0.1)
+    np.testing.assert_allclose(np.array(
+        [0.023291, 0.111382, 0.211022, 0.186723, 0.045481]), src.sliprate,
+        rtol=1E-3)
+
+    src = ForceSource(latitude=0.0, longitude=90.0)
+    src.sliprate = np.ones(5)
+    src.dt = 0.25
+    src.normalize_sliprate()
+    np.testing.assert_allclose(np.ones(5), src.sliprate)
+
+
 def test_str_method_of_src():
     src = Source(latitude=0.0, longitude=90.0)
     assert str(src) == (
@@ -532,7 +553,7 @@ def test_str_method_of_finite_source():
     finitesource = FiniteSource.from_srf_file(SRF_FILE, True)
     assert str(finitesource) == (
             "Instaseis Finite Source:\n"
-            "\tMoment Magnitude     : 7.67\n"
+            "\tMoment Magnitude     : 7.60\n"
             "\tScalar Moment        :   3.20e+20 Nm\n"
             "\t#Point Sources       : 10\n"
             "\tRupture Duration     :  222.2 s\n"
@@ -593,7 +614,7 @@ def test_print_regressions():
         "\tLongitude        :   85.4 deg\n"
         "\tLatitude         :   27.8 deg\n"
         "\tDepth            : 1.2e+01 km km\n"
-        "\tMoment Magnitude :   8.00\n"
+        "\tMoment Magnitude :   7.93\n"
         "\tScalar Moment    :   1.00e+21 Nm\n"
         "\tMrr              :   8.29e+20 Nm\n"
         "\tMtt              :  -2.33e+20 Nm\n"

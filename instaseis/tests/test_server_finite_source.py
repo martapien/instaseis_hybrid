@@ -92,7 +92,7 @@ def test_triggering_random_error_during_parsing(reciprocal_clients):
                               "Incorrect USGS param file?")
 
 
-def test_sending_non_USGS_file(reciprocal_clients):
+def test_sending_non_usgs_file(reciprocal_clients):
     """
     Tests error if a non-USGS file is sent.
     """
@@ -408,11 +408,11 @@ def test_more_complex_queries(reciprocal_clients_all_callbacks,
     assert request.code == 200
     st_2 = obspy.read(request.buffer)
 
-    assert st_2[0].stats.endtime == st[0].stats.starttime + 20
+    assert st_2[0].stats.endtime == st[0].stats.starttime + 18
 
     # The rest of data should still be identical.
     np.testing.assert_allclose(
-        st.slice(endtime=st[0].stats.starttime + 20)[0].data,
+        st.slice(endtime=st[0].stats.starttime + 18)[0].data,
         st_2[0].data)
 
     # Phase relative start and endtimes.

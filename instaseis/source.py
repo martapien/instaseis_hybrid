@@ -61,7 +61,7 @@ def _purge_duplicates(f):
     return wrapper
 
 
-def moment2magnitude(M0):
+def moment2magnitude(M0):  # NOQA
     """
     Convert seismic moment M0 to moment magnitude Mw
 
@@ -70,10 +70,12 @@ def moment2magnitude(M0):
     :return Mw: moment magnitude
     :type Mw: float
     """
-    return 2.0 / 3.0 * np.log10(M0) - 6.0
+    if M0 <= 0.0:
+        return -np.inf
+    return 2.0 / 3.0 * (np.log10(M0) - 9.1)
 
 
-def magnitude2moment(Mw):
+def magnitude2moment(Mw):  # NOQA
     """
     Convert moment magnitude Mw to seismic moment M0
 
@@ -82,7 +84,7 @@ def magnitude2moment(Mw):
     :return M0: seismic moment in Nm
     :type M0: float
     """
-    return 10.0 ** ((Mw + 6.0) / 2.0 * 3.0)
+    return 10.0 ** ((Mw / 2.0 * 3.0 + 9.1))
 
 
 def fault_vectors_lmn(strike, dip, rake):
@@ -103,7 +105,7 @@ def fault_vectors_lmn(strike, dip, rake):
     delta = np.deg2rad(dip)
     lambd = np.deg2rad(rake)
 
-    l = np.empty(3)
+    l = np.empty(3)  # NOQA
     m = np.empty(3)
     n = np.empty(3)
 
@@ -127,7 +129,7 @@ def fault_vectors_lmn(strike, dip, rake):
     # here we use geocentric, i.e. t,p,r
 
     transform = np.array([-1., 1., -1.])
-    l *= transform
+    l *= transform  # NOQA
     m *= transform
     n *= transform
 
@@ -259,272 +261,7 @@ class SourceOrReceiver(object):
             self.radius_in_m(planet_radius=planet_radius)
 
 
-class Source(SourceOrReceiver):
-    """
-    Class to handle a seismic moment tensor source including a source time
-    function.
-    """
-    def __init__(self, latitude, longitude, depth_in_m=None, m_rr=0.0,
-                 m_tt=0.0, m_pp=0.0, m_rt=0.0, m_rp=0.0, m_tp=0.0,
-                 time_shift=None, sliprate=None, dt=None,
-                 origin_time=obspy.UTCDateTime(0)):
-        """
-        :param latitude: geocentric latitude of the source in degree
-        :param longitude: longitude of the source in degree
-        :param depth_in_m: source depth in m
-        :param m_rr: moment tensor components in r, theta, phi in Nm
-        :param m_tt: moment tensor components in r, theta, phi in Nm
-        :param m_pp: moment tensor components in r, theta, phi in Nm
-        :param m_rt: moment tensor components in r, theta, phi in Nm
-        :param m_rp: moment tensor components in r, theta, phi in Nm
-        :param m_tp: moment tensor components in r, theta, phi in Nm
-        :param time_shift: correction of the origin time in seconds. Useful
-            in the context of finite source or user defined source time
-            functions.
-        :param sliprate: normalized source time function (sliprate)
-        :param dt: sampling of the source time function
-        :param origin_time: The origin time of the source. If you don't
-            reconvolve with another source time function this time is the
-            peak of the source time function used to generate the database.
-            If you reconvolve with another source time function this time is
-            the time of the first sample of the final seismogram.
-
-        >>> import instaseis
-        >>> source = instaseis.Source(
-        ...     latitude=89.91, longitude=0.0, depth_in_m=12000,
-        ...     m_rr = 4.71e+17, m_tt = 3.81e+15, m_pp =-4.74e+17,
-        ...     m_rt = 3.99e+16, m_rp =-8.05e+16, m_tp =-1.23e+17)
-        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
-        Instaseis Source:
-            Origin Time      : 1970-01-01T00:00:00.000000Z
-            Longitude        :    0.0 deg
-            Latitude         :   89.9 deg
-            Depth            : 1.2e+01 km km
-            Moment Magnitude :   5.80
-            Scalar Moment    :   4.96e+17 Nm
-            Mrr              :   4.71e+17 Nm
-            Mtt              :   3.81e+15 Nm
-            Mpp              :  -4.74e+17 Nm
-            Mrt              :   3.99e+16 Nm
-            Mrp              :  -8.05e+16 Nm
-            Mtp              :  -1.23e+17 Nm
-        """
-        super(Source, self).__init__(latitude, longitude, depth_in_m)
-        self.m_rr = m_rr
-        self.m_tt = m_tt
-        self.m_pp = m_pp
-        self.m_rt = m_rt
-        self.m_rp = m_rp
-        self.m_tp = m_tp
-        self.origin_time = origin_time
-        self.time_shift = time_shift
-        self.sliprate = np.array(sliprate) if sliprate is not None else None
-        self.dt = dt
-
-    @staticmethod
-    def parse(filename_or_obj):
-        """
-        Attempts to parse anything to a Source object. Can currently read
-        anything ObsPy can read, ObsPy event related objects.
-
-        For anything ObsPy related, it must contain a full moment tensor,
-        otherwise it will raise an error.
-
-        Coordinates are assumed to be defined on the WGS84 ellipsoid and
-        will be converted to geocentric coordinates.
-
-        :param filename_or_obj: The object or filename to parse.
-
-
-        The following example will read a local QuakeML file and return a
-        :class:`~instaseis.source.Source` object.
-
-        >>> import instaseis
-        >>> source = instaseis.Source.parse(quakeml_file)
-        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
-        Instaseis Source:
-            Origin Time      : 2010-03-24T14:11:31.000000Z
-            Longitude        :   40.1 deg
-            Latitude         :   38.6 deg
-            Depth            : 4.5e+00 km km
-            Moment Magnitude :   5.15
-            Scalar Moment    :   5.37e+16 Nm
-            Mrr              :   5.47e+15 Nm
-            Mtt              :  -4.11e+16 Nm
-            Mpp              :   3.56e+16 Nm
-            Mrt              :   2.26e+16 Nm
-            Mrp              :  -2.25e+16 Nm
-            Mtp              :   1.92e+16 Nm
-        """
-        # py2/py3 compatibility.
-        try:  # pragma: no cover
-            str_types = (str, bytes, unicode)  # NOQA
-        except:  # pragma: no cover
-            str_types = (str, bytes)
-
-        if isinstance(filename_or_obj, str_types):
-            # Anything ObsPy can read.
-            try:
-                src = obspy.read_events(filename_or_obj)
-            except:
-                pass
-            else:
-                return Source.parse(src)
-            raise SourceParseError("Could not parse the given source.")
-        elif isinstance(filename_or_obj, obspy.Catalog):
-            if len(filename_or_obj) == 0:
-                raise SourceParseError("Event catalog contains zero events.")
-            elif len(filename_or_obj) > 1:
-                raise SourceParseError(
-                    "Event catalog contains %i events. Only one is allowed. "
-                    "Please parse seperately." % len(filename_or_obj))
-            return Source.parse(filename_or_obj[0])
-        elif isinstance(filename_or_obj, obspy.core.event.Event):
-            ev = filename_or_obj
-            if not ev.origins:
-                raise SourceParseError("Event must contain an origin.")
-            if not ev.focal_mechanisms:
-                raise SourceParseError("Event must contain a focal mechanism.")
-            org = ev.preferred_origin() or ev.origins[0]
-            fm = ev.preferred_focal_mechanism() or ev.focal_mechanisms[0]
-            if not fm.moment_tensor:
-                raise SourceParseError("Event must contain a moment tensor.")
-            t = fm.moment_tensor.tensor
-            return Source(
-                latitude=elliptic_to_geocentric_latitude(org.latitude),
-                longitude=org.longitude,
-                depth_in_m=org.depth,
-                origin_time=org.time,
-                m_rr=t.m_rr,
-                m_tt=t.m_tt,
-                m_pp=t.m_pp,
-                m_rt=t.m_rt,
-                m_rp=t.m_rp,
-                m_tp=t.m_tp)
-        else:
-            raise NotImplementedError
-
-    @classmethod
-    def from_strike_dip_rake(self, latitude, longitude, depth_in_m, strike,
-                             dip, rake, M0, time_shift=None, sliprate=None,
-                             dt=None, origin_time=obspy.UTCDateTime(0)):
-        """
-        Initialize a source object from a shear source parameterized by strike,
-        dip and rake.
-
-        :param latitude: geocentric latitude of the source in degree
-        :param longitude: longitude of the source in degree
-        :param depth_in_m: source depth in m
-        :param strike: strike of the fault in degree
-        :param dip: dip of the fault in degree
-        :param rake: rake of the fault in degree
-        :param M0: scalar moment
-        :param time_shift: correction of the origin time in seconds. only
-            useful in the context of finite sources
-        :param sliprate: normalized source time function (sliprate)
-        :param dt: sampling of the source time function
-        :param origin_time: The origin time of the source. If you don't
-            reconvolve with another source time function this time is the
-            peak of the source time function used to generate the database.
-            If you reconvolve with another source time function this time is
-            the time of the first sample of the final seismogram.
-
-        >>> import instaseis
-        >>> source = instaseis.Source.from_strike_dip_rake(
-        ...     latitude=10.0, longitude=12.0, depth_in_m=1000, strike=79,
-        ...     dip=10, rake=20, M0=1E17)
-        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
-        Instaseis Source:
-            Origin Time      : 1970-01-01T00:00:00.000000Z
-            Longitude        :   12.0 deg
-            Latitude         :   10.0 deg
-            Depth            : 1.0e+00 km km
-            Moment Magnitude :   5.33
-            Scalar Moment    :   1.00e+17 Nm
-            Mrr              :   1.17e+16 Nm
-            Mtt              :  -1.74e+16 Nm
-            Mpp              :   5.69e+15 Nm
-            Mrt              :  -4.92e+16 Nm
-            Mrp              :   8.47e+16 Nm
-            Mtp              :   1.29e+16 Nm
-        """
-        assert M0 >= 0
-        if dt is not None:
-            assert dt > 0
-
-        # formulas in Udias (17.24) are in geographic system North, East,
-        # Down, which # transforms to the geocentric as:
-        # Mtt =  Mxx, Mpp = Myy, Mrr =  Mzz
-        # Mrp = -Myz, Mrt = Mxz, Mtp = -Mxy
-        # voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-        phi = np.deg2rad(strike)
-        delta = np.deg2rad(dip)
-        lambd = np.deg2rad(rake)
-
-        m_tt = (- np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
-                np.sin(2. * delta) * np.sin(phi)**2. * np.sin(lambd)) * M0
-
-        m_pp = (np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
-                np.sin(2. * delta) * np.cos(phi)**2. * np.sin(lambd)) * M0
-
-        m_rr = (np.sin(2. * delta) * np.sin(lambd)) * M0
-
-        m_rp = (- np.cos(phi) * np.sin(lambd) * np.cos(2. * delta) +
-                np.cos(delta) * np.cos(lambd) * np.sin(phi)) * M0
-
-        m_rt = (- np.sin(lambd) * np.sin(phi) * np.cos(2. * delta) -
-                np.cos(delta) * np.cos(lambd) * np.cos(phi)) * M0
-
-        m_tp = (- np.sin(delta) * np.cos(lambd) * np.cos(2. * phi) -
-                np.sin(2. * delta) * np.sin(2. * phi) * np.sin(lambd) / 2.) * \
-            M0
-
-        source = self(latitude, longitude, depth_in_m, m_rr, m_tt, m_pp, m_rt,
-                      m_rp, m_tp, time_shift, sliprate, dt,
-                      origin_time=origin_time)
-
-        # storing strike, dip and rake for plotting purposes
-        source.phi = phi
-        source.delta = delta
-        source.lambd = lambd
-
-        return source
-
-    @property
-    def M0(self):
-        """
-        Scalar Moment M0 in Nm
-        """
-        return (self.m_rr ** 2 + self.m_tt ** 2 + self.m_pp ** 2 +
-                2 * self.m_rt ** 2 + 2 * self.m_rp ** 2 +
-                2 * self.m_tp ** 2) ** 0.5 * 0.5 ** 0.5
-
-    @property
-    def moment_magnitude(self):
-        """
-        Moment magnitude M_w
-        """
-        return moment2magnitude(self.M0)
-
-    @property
-    def tensor(self):
-        """
-        List of moment tensor components in r, theta, phi coordinates:
-        [m_rr, m_tt, m_pp, m_rt, m_rp, m_tp]
-        """
-        return np.array([self.m_rr, self.m_tt, self.m_pp, self.m_rt, self.m_rp,
-                         self.m_tp])
-
-    @property
-    def tensor_voigt(self):
-        """
-        List of moment tensor components in theta, phi, r coordinates in Voigt
-        notation:
-        [m_tt, m_pp, m_rr, m_rp, m_rt, m_tp]
-        """
-        return np.array([self.m_tt, self.m_pp, self.m_rr, self.m_rp, self.m_rt,
-                         self.m_tp])
-
+class SourceTimeFunction(object):
     def set_sliprate(self, sliprate, dt, time_shift=None, normalize=True):
         """
         Add a source time function (sliprate) to a initialized source object.
@@ -585,6 +322,274 @@ class Source(SourceOrReceiver):
         self.sliprate = lowpass(self.sliprate, freq, 1./self.dt, corners,
                                 zerophase)
 
+
+class Source(SourceOrReceiver, SourceTimeFunction):
+    """
+    Class to handle a seismic moment tensor source including a source time
+    function.
+    """
+    def __init__(self, latitude, longitude, depth_in_m=None, m_rr=0.0,
+                 m_tt=0.0, m_pp=0.0, m_rt=0.0, m_rp=0.0, m_tp=0.0,
+                 time_shift=None, sliprate=None, dt=None,
+                 origin_time=obspy.UTCDateTime(0)):
+        """
+        :param latitude: geocentric latitude of the source in degree
+        :param longitude: longitude of the source in degree
+        :param depth_in_m: source depth in m
+        :param m_rr: moment tensor components in r, theta, phi in Nm
+        :param m_tt: moment tensor components in r, theta, phi in Nm
+        :param m_pp: moment tensor components in r, theta, phi in Nm
+        :param m_rt: moment tensor components in r, theta, phi in Nm
+        :param m_rp: moment tensor components in r, theta, phi in Nm
+        :param m_tp: moment tensor components in r, theta, phi in Nm
+        :param time_shift: correction of the origin time in seconds. Useful
+            in the context of finite source or user defined source time
+            functions.
+        :param sliprate: normalized source time function (sliprate)
+        :param dt: sampling of the source time function
+        :param origin_time: The origin time of the source. If you don't
+            reconvolve with another source time function this time is the
+            peak of the source time function used to generate the database.
+            If you reconvolve with another source time function this time is
+            the time of the first sample of the final seismogram.
+
+        >>> import instaseis
+        >>> source = instaseis.Source(
+        ...     latitude=89.91, longitude=0.0, depth_in_m=12000,
+        ...     m_rr = 4.71e+17, m_tt = 3.81e+15, m_pp =-4.74e+17,
+        ...     m_rt = 3.99e+16, m_rp =-8.05e+16, m_tp =-1.23e+17)
+        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
+        Instaseis Source:
+            Origin Time      : 1970-01-01T00:00:00.000000Z
+            Longitude        :    0.0 deg
+            Latitude         :   89.9 deg
+            Depth            : 1.2e+01 km km
+            Moment Magnitude :   5.73
+            Scalar Moment    :   4.96e+17 Nm
+            Mrr              :   4.71e+17 Nm
+            Mtt              :   3.81e+15 Nm
+            Mpp              :  -4.74e+17 Nm
+            Mrt              :   3.99e+16 Nm
+            Mrp              :  -8.05e+16 Nm
+            Mtp              :  -1.23e+17 Nm
+        """
+        super(Source, self).__init__(latitude, longitude, depth_in_m)
+        self.m_rr = m_rr
+        self.m_tt = m_tt
+        self.m_pp = m_pp
+        self.m_rt = m_rt
+        self.m_rp = m_rp
+        self.m_tp = m_tp
+        self.origin_time = origin_time
+        self.time_shift = time_shift
+        self.sliprate = np.array(sliprate) if sliprate is not None else None
+        self.dt = dt
+
+    @staticmethod
+    def parse(filename_or_obj):
+        """
+        Attempts to parse anything to a Source object. Can currently read
+        anything ObsPy can read, ObsPy event related objects.
+
+        For anything ObsPy related, it must contain a full moment tensor,
+        otherwise it will raise an error.
+
+        Coordinates are assumed to be defined on the WGS84 ellipsoid and
+        will be converted to geocentric coordinates.
+
+        :param filename_or_obj: The object or filename to parse.
+
+
+        The following example will read a local QuakeML file and return a
+        :class:`~instaseis.source.Source` object.
+
+        >>> import instaseis
+        >>> source = instaseis.Source.parse(quakeml_file)
+        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
+        Instaseis Source:
+            Origin Time      : 2010-03-24T14:11:31.000000Z
+            Longitude        :   40.1 deg
+            Latitude         :   38.6 deg
+            Depth            : 4.5e+00 km km
+            Moment Magnitude :   5.09
+            Scalar Moment    :   5.37e+16 Nm
+            Mrr              :   5.47e+15 Nm
+            Mtt              :  -4.11e+16 Nm
+            Mpp              :   3.56e+16 Nm
+            Mrt              :   2.26e+16 Nm
+            Mrp              :  -2.25e+16 Nm
+            Mtp              :   1.92e+16 Nm
+        """
+        # py2/py3 compatibility.
+        try:  # pragma: no cover
+            str_types = (str, bytes, unicode)  # NOQA
+        except Exception:  # pragma: no cover
+            str_types = (str, bytes)
+
+        if isinstance(filename_or_obj, str_types):
+            # Anything ObsPy can read.
+            try:
+                src = obspy.read_events(filename_or_obj)
+            except Exception:
+                pass
+            else:
+                return Source.parse(src)
+            raise SourceParseError("Could not parse the given source.")
+        elif isinstance(filename_or_obj, obspy.Catalog):
+            if len(filename_or_obj) == 0:
+                raise SourceParseError("Event catalog contains zero events.")
+            elif len(filename_or_obj) > 1:
+                raise SourceParseError(
+                    "Event catalog contains %i events. Only one is allowed. "
+                    "Please parse seperately." % len(filename_or_obj))
+            return Source.parse(filename_or_obj[0])
+        elif isinstance(filename_or_obj, obspy.core.event.Event):
+            ev = filename_or_obj
+            if not ev.origins:
+                raise SourceParseError("Event must contain an origin.")
+            if not ev.focal_mechanisms:
+                raise SourceParseError("Event must contain a focal mechanism.")
+            org = ev.preferred_origin() or ev.origins[0]
+            fm = ev.preferred_focal_mechanism() or ev.focal_mechanisms[0]
+            if not fm.moment_tensor:
+                raise SourceParseError("Event must contain a moment tensor.")
+            t = fm.moment_tensor.tensor
+            return Source(
+                latitude=elliptic_to_geocentric_latitude(org.latitude),
+                longitude=org.longitude,
+                depth_in_m=org.depth,
+                origin_time=org.time,
+                m_rr=t.m_rr,
+                m_tt=t.m_tt,
+                m_pp=t.m_pp,
+                m_rt=t.m_rt,
+                m_rp=t.m_rp,
+                m_tp=t.m_tp)
+        else:
+            raise NotImplementedError
+
+    @classmethod
+    def from_strike_dip_rake(  # NOQA
+        cls, latitude, longitude, depth_in_m, strike, dip, rake, M0,
+        time_shift=None, sliprate=None, dt=None,
+        origin_time=obspy.UTCDateTime(0)):
+        """
+        Initialize a source object from a shear source parameterized by strike,
+        dip and rake.
+
+        :param latitude: geocentric latitude of the source in degree
+        :param longitude: longitude of the source in degree
+        :param depth_in_m: source depth in m
+        :param strike: strike of the fault in degree
+        :param dip: dip of the fault in degree
+        :param rake: rake of the fault in degree
+        :param M0: scalar moment
+        :param time_shift: correction of the origin time in seconds. only
+            useful in the context of finite sources
+        :param sliprate: normalized source time function (sliprate)
+        :param dt: sampling of the source time function
+        :param origin_time: The origin time of the source. If you don't
+            reconvolve with another source time function this time is the
+            peak of the source time function used to generate the database.
+            If you reconvolve with another source time function this time is
+            the time of the first sample of the final seismogram.
+
+        >>> import instaseis
+        >>> source = instaseis.Source.from_strike_dip_rake(
+        ...     latitude=10.0, longitude=12.0, depth_in_m=1000, strike=79,
+        ...     dip=10, rake=20, M0=1E17)
+        >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
+        Instaseis Source:
+            Origin Time      : 1970-01-01T00:00:00.000000Z
+            Longitude        :   12.0 deg
+            Latitude         :   10.0 deg
+            Depth            : 1.0e+00 km km
+            Moment Magnitude :   5.27
+            Scalar Moment    :   1.00e+17 Nm
+            Mrr              :   1.17e+16 Nm
+            Mtt              :  -1.74e+16 Nm
+            Mpp              :   5.69e+15 Nm
+            Mrt              :  -4.92e+16 Nm
+            Mrp              :   8.47e+16 Nm
+            Mtp              :   1.29e+16 Nm
+        """
+        assert M0 >= 0
+        if dt is not None:
+            assert dt > 0
+
+        # formulas in Udias (17.24) are in geographic system North, East,
+        # Down, which # transforms to the geocentric as:
+        # Mtt =  Mxx, Mpp = Myy, Mrr =  Mzz
+        # Mrp = -Myz, Mrt = Mxz, Mtp = -Mxy
+        # voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
+        phi = np.deg2rad(strike)
+        delta = np.deg2rad(dip)
+        lambd = np.deg2rad(rake)
+
+        m_tt = (- np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
+                np.sin(2. * delta) * np.sin(phi)**2. * np.sin(lambd)) * M0
+
+        m_pp = (np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
+                np.sin(2. * delta) * np.cos(phi)**2. * np.sin(lambd)) * M0
+
+        m_rr = (np.sin(2. * delta) * np.sin(lambd)) * M0
+
+        m_rp = (- np.cos(phi) * np.sin(lambd) * np.cos(2. * delta) +
+                np.cos(delta) * np.cos(lambd) * np.sin(phi)) * M0
+
+        m_rt = (- np.sin(lambd) * np.sin(phi) * np.cos(2. * delta) -
+                np.cos(delta) * np.cos(lambd) * np.cos(phi)) * M0
+
+        m_tp = (- np.sin(delta) * np.cos(lambd) * np.cos(2. * phi) -
+                np.sin(2. * delta) * np.sin(2. * phi) * np.sin(lambd) / 2.) * \
+            M0
+
+        source = cls(latitude, longitude, depth_in_m, m_rr, m_tt, m_pp, m_rt,
+                     m_rp, m_tp, time_shift, sliprate, dt,
+                     origin_time=origin_time)
+
+        # storing strike, dip and rake for plotting purposes
+        source.phi = phi
+        source.delta = delta
+        source.lambd = lambd
+
+        return source
+
+    @property
+    def M0(self):  # NOQA
+        """
+        Scalar Moment M0 in Nm
+        """
+        return (self.m_rr ** 2 + self.m_tt ** 2 + self.m_pp ** 2 +
+                2 * self.m_rt ** 2 + 2 * self.m_rp ** 2 +
+                2 * self.m_tp ** 2) ** 0.5 * 0.5 ** 0.5
+
+    @property
+    def moment_magnitude(self):
+        """
+        Moment magnitude M_w
+        """
+        return moment2magnitude(self.M0)
+
+    @property
+    def tensor(self):
+        """
+        List of moment tensor components in r, theta, phi coordinates:
+        [m_rr, m_tt, m_pp, m_rt, m_rp, m_tp]
+        """
+        return np.array([self.m_rr, self.m_tt, self.m_pp, self.m_rt, self.m_rp,
+                         self.m_tp])
+
+    @property
+    def tensor_voigt(self):
+        """
+        List of moment tensor components in theta, phi, r coordinates in Voigt
+        notation:
+        [m_tt, m_pp, m_rr, m_rp, m_rt, m_tp]
+        """
+        return np.array([self.m_tt, self.m_pp, self.m_rr, self.m_rp, self.m_rt,
+                         self.m_tp])
+
     def __str__(self):
         return_str = 'Instaseis Source:\n'
         return_str += '\tOrigin Time      : %s\n' % (self.origin_time,)
@@ -606,7 +611,7 @@ class Source(SourceOrReceiver):
         return return_str
 
 
-class ForceSource(SourceOrReceiver):
+class ForceSource(SourceOrReceiver, SourceTimeFunction):
     """
     Class to handle a seismic force source.
 
@@ -640,15 +645,33 @@ class ForceSource(SourceOrReceiver):
         Fp        :   0.00e+00 N
     """
     def __init__(self, latitude, longitude, depth_in_m=None, f_r=0., f_t=0.,
-                 f_p=0., origin_time=obspy.UTCDateTime(0), time_shift=None,
-                 sliprate=None, dt=None):
+                 f_p=0., origin_time=obspy.UTCDateTime(0), sliprate=None,
+                 time_shift=None, dt=None):
+        """
+        :param latitude: geocentric latitude of the source in degree
+        :param longitude: longitude of the source in degree
+        :param depth_in_m: source depth in m
+        :param f_r: force components in r, theta, phi in N
+        :param f_t: force components in r, theta, phi in N
+        :param f_p: force components in r, theta, phi in N
+        :param origin_time: The origin time of the source. If you don't
+            reconvolve with another source time function this time is the
+            peak of the source time function used to generate the database.
+            If you reconvolve with another source time function this time is
+            the time of the first sample of the final seismogram.
+        :param sliprate: normalized source time function (sliprate)
+        :param time_shift: correction of the origin time in seconds. Useful
+            in the context of finite source or user defined source time
+            functions.
+        :param dt: sampling of the source time function
+        """
         super(ForceSource, self).__init__(latitude, longitude, depth_in_m)
         self.f_r = f_r
         self.f_t = f_t
         self.f_p = f_p
         self.origin_time = origin_time
-        self.sliprate = sliprate
         self.time_shift = time_shift
+        self.sliprate = np.array(sliprate) if sliprate is not None else None
         self.dt = dt
 
     @property
@@ -831,7 +854,7 @@ class Receiver(SourceOrReceiver):
                 os.path.exists(filename_or_obj):
             try:
                 return Receiver._parse_stations_file(filename_or_obj)
-            except:
+            except Exception:
                 pass
         # ObsPy inventory.
         elif isinstance(filename_or_obj, obspy.core.inventory.Inventory):
@@ -903,7 +926,7 @@ class Receiver(SourceOrReceiver):
                 if len(set(value)) != 1:
                     raise ReceiverParseError(
                         "The coordinates of the channels of station '%s.%s' "
-                        "are not identical" % key)
+                        "are not identical." % key)
                 receivers.append(Receiver(
                     latitude=elliptic_to_geocentric_latitude(value[0][0]),
                     longitude=value[0][1],
@@ -916,7 +939,7 @@ class Receiver(SourceOrReceiver):
             return Receiver.parse(obspy.read_inventory(filename_or_obj))
         except ReceiverParseError as e:
             raise e
-        except:
+        except Exception:
             pass
 
         # SAC files contain station coordinates.
@@ -924,7 +947,7 @@ class Receiver(SourceOrReceiver):
             return Receiver.parse(obspy.read(filename_or_obj))
         except ReceiverParseError as e:
             raise e
-        except:
+        except Exception:
             pass
 
         # Last but not least try to parse it as a SEED file.
@@ -933,7 +956,7 @@ class Receiver(SourceOrReceiver):
                 obspy.io.xseed.parser.Parser(filename_or_obj))
         except ReceiverParseError as e:
             raise e
-        except:
+        except Exception:
             pass
 
         raise ValueError("%s could not be parsed." % repr(filename_or_obj))
@@ -980,7 +1003,7 @@ class FiniteSource(object):
     :param hypocenter_depth_in_m: The hypocentral depth in m.
     :type hypocenter_depth_in_m: float, optional
     """
-    def __init__(self, pointsources=None, CMT=None, magnitude=None,
+    def __init__(self, pointsources=None, CMT=None, magnitude=None,  # NOQA
                  event_duration=None, hypocenter_longitude=None,
                  hypocenter_latitude=None, hypocenter_depth_in_m=None):
         self.pointsources = pointsources
@@ -1018,7 +1041,7 @@ class FiniteSource(object):
         return self.pointsources[index]
 
     @classmethod
-    def from_srf_file(self, filename, normalize=False):
+    def from_srf_file(cls, filename, normalize=False):
         """
         Initialize a finite source object from a 'standard rupture format'
         (.srf) file
@@ -1035,7 +1058,7 @@ class FiniteSource(object):
         >>> source = instaseis.FiniteSource.from_srf_file(srf_file)
         >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
         Instaseis Finite Source:
-            Moment Magnitude     : 7.67
+            Moment Magnitude     : 7.60
             Scalar Moment        :   3.20e+20 Nm
             #Point Sources       : 10
             Rupture Duration     :  222.2 s
@@ -1085,11 +1108,11 @@ class FiniteSource(object):
                     if normalize:
                         stf /= np.trapz(stf, dx=dt)
 
-                    M0 = area * DEFAULT_MU * slip1
+                    m0 = area * DEFAULT_MU * slip1
 
                     sources.append(
                         Source.from_strike_dip_rake(
-                            lat, lon, dep, stk, dip, rake, M0,
+                            lat, lon, dep, stk, dip, rake, m0,
                             time_shift=tinit, sliprate=stf, dt=dt))
 
                 if nt2 > 0:
@@ -1100,17 +1123,17 @@ class FiniteSource(object):
                     if normalize:
                         stf /= np.trapz(stf, dx=dt)
 
-                    M0 = area * DEFAULT_MU * slip2
+                    m0 = area * DEFAULT_MU * slip2
 
                     sources.append(
                         Source.from_strike_dip_rake(
-                            lat, lon, dep, stk, dip, rake, M0,
+                            lat, lon, dep, stk, dip, rake, m0,
                             time_shift=tinit, sliprate=stf, dt=dt))
 
                 if nt3 > 0:
                     raise NotImplementedError('Slip along u3 axis')
 
-            return self(pointsources=sources)
+            return cls(pointsources=sources)
 
     @classmethod
     def from_usgs_param_file(cls, filename_or_obj, npts=10000, dt=0.1,
@@ -1141,7 +1164,7 @@ class FiniteSource(object):
         >>> source = instaseis.FiniteSource.from_usgs_param_file(param_file)
         >>> print(source)  # doctest: +NORMALIZE_WHITESPACE
         Instaseis Finite Source:
-            Moment Magnitude     : 7.94
+            Moment Magnitude     : 7.87
             Scalar Moment        :   8.06e+20 Nm
             #Point Sources       : 121
             Rupture Duration     :  107.6 s
@@ -1239,10 +1262,11 @@ class FiniteSource(object):
         return cls(pointsources=sources)
 
     @classmethod
-    def from_Haskell(self, latitude, longitude, depth_in_m, strike, dip, rake,
-                     M0, fault_length, fault_width, rupture_velocity, nl=100,
-                     nw=1, trise=1., tfall=None, dt=0.1, planet_radius=6371e3,
-                     origin_time=obspy.UTCDateTime(0)):
+    def from_Haskell(  # NOQA
+            self, latitude, longitude, depth_in_m, strike, dip, rake, M0,
+            fault_length, fault_width, rupture_velocity, nl=100, nw=1,
+            trise=1., tfall=None, dt=0.1, planet_radius=6371e3,
+            origin_time=obspy.UTCDateTime(0)):
         """
         Initialize a source object from a shear source parameterized by strike,
         dip and rake.
@@ -1407,7 +1431,7 @@ class FiniteSource(object):
         x = 0.0
         y = 0.0
         z = 0.0
-        finite_M0 = self.M0
+        finite_m0 = self.M0
         finite_mij = np.zeros(6)
         finite_time_shift = 0.0  # time shift is now included in the sliprate
 
@@ -1425,11 +1449,11 @@ class FiniteSource(object):
         self.resample_sliprate(dt, nsamp)
 
         for ps in self.pointsources:
-            x += ps.x(planet_radius) * ps.M0 / finite_M0
-            y += ps.y(planet_radius) * ps.M0 / finite_M0
-            z += ps.z(planet_radius) * ps.M0 / finite_M0
+            x += ps.x(planet_radius) * ps.M0 / finite_m0
+            y += ps.y(planet_radius) * ps.M0 / finite_m0
+            z += ps.z(planet_radius) * ps.M0 / finite_m0
 
-            # finite_time_shift += ps.time_shift * ps.M0 / finite_M0
+            # finite_time_shift += ps.time_shift * ps.M0 / finite_m0
 
             mij = rotations.rotate_symm_tensor_voigt_xyz_src_to_xyz_earth(
                 ps.tensor_voigt, np.deg2rad(ps.longitude),
@@ -1441,7 +1465,7 @@ class FiniteSource(object):
             sliprate_f *= np.exp(- 1j * rfftfreq(nfft) *
                                  2. * np.pi * ps.time_shift / dt)
             finite_sliprate += np.fft.irfft(sliprate_f)[:nsamp] \
-                * ps.M0 / finite_M0
+                * ps.M0 / finite_m0
 
         longitude = np.rad2deg(np.arctan2(y, x))
         colatitude = np.rad2deg(
@@ -1460,7 +1484,7 @@ class FiniteSource(object):
                           sliprate=finite_sliprate, dt=dt)
 
     @property
-    def M0(self):
+    def M0(self):  # NOQA
         """
         Scalar Moment M0 in Nm
         """

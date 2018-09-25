@@ -29,7 +29,8 @@ from obspy.signal.util import next_pow_2
 from scipy.integrate import cumtrapz
 import scipy.signal
 
-from ..source import Source, ForceSource, Receiver, HybridSourceSingle
+from ..source import Source, ForceSource, Receiver, \
+    HybridSourceSingle, FiniteSource
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq
 from ..rotations import hybrid_vector_local_cartesian_to_tpr, \
     hybrid_coord_transform_local_cartesian_to_tpr
@@ -1352,6 +1353,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     "that would be a downsampling operation which Instaseis "
                     "does not do." % self.info.dt)
 
+        if isinstance(source, FiniteSource):
+            raise TypeError(
+                "Please use the `get_seismograms_finite_source()` method to "
+                "compute seisomgrams with finite sources.")
+
         # Attempt to parse them if the types are not correct.
         if not isinstance(source, Source) and \
                 not isinstance(source, ForceSource):
@@ -1441,7 +1447,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
     def info(self):
         try:
             return self.__cached_info
-        except:
+        except Exception:
             pass
         self.__cached_info = AttribDict(self._get_info())
         return self.__cached_info

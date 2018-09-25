@@ -63,6 +63,7 @@ def get_package_data():
         inspect.getfile(inspect.currentframe()))), "instaseis")
     # Recursively include all files in these folders:
     folders = [os.path.join(root_dir, "tests", "data"),
+               os.path.join(root_dir, "gui", "data"),
                os.path.join(root_dir, "server", "data")]
     for folder in folders:
         for directory, _, files in os.walk(folder):
@@ -140,9 +141,10 @@ lib = MyExtension('instaseis',
 
 INSTALL_REQUIRES = ["h5py",
                     "numpy",
-                    "obspy >= 1.0.2",
+                    "obspy >= 1.1.0",
                     "future",
-                    "tornado>=4.0.0",
+                    'futures; python_version == "2.7"',
+                    "tornado>=5.0.0",
                     "requests",
                     "geographiclib",
                     "jsonschema >= 2.4.0"]
