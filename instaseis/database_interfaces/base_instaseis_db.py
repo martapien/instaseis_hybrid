@@ -351,6 +351,203 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 dt_out=dt_out, starttime=time_information["starttime"])
         else:
             return data
+            
+    def get_seismograms_stf(self, source, receiver, components=None,
+                        kind='displacement', remove_source_shift=False,
+                        reconvolve_stf=True, return_obspy_stream=True,
+                        dt=None, kernelwidth=12):
+        """
+        Extract seismograms from the Green's function database.
+
+        :param source: The source definition.
+        :type source: :class:`instaseis.source.Source` or
+            :class:`instaseis.source.ForceSource`
+        :param receiver: The seismic receiver.
+        :type receiver: :class:`instaseis.source.Receiver`
+        :type components: tuple of str, optional
+        :param components: Which components to calculate. Must be a tuple
+            containing any combination of ``"Z"``, ``"N"``, ``"E"``,
+            ``"R"``, and ``"T"``. Defaults to ``["Z", "N", "E"]`` for two
+            component databases, to ``["N", "E"]`` for horizontal only
+            databases, and to ``["Z"]`` for vertical only databases.
+        :type kind: str, optional
+        :param kind: The desired units of the seismogram:
+            ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
+        :type remove_source_shift: bool, optional
+        :param remove_source_shift: Cut all samples before the peak of the
+            source time function. This has the effect that the first sample
+            is the origin time of the source.
+        :type reconvolve_stf: bool, optional
+        :param reconvolve_stf: Deconvolve the source time function used in
+            the AxiSEM run and convolve with the STF attached to the source.
+            For this to be stable, the new STF needs to bandlimited.
+        :type return_obspy_stream: bool, optional
+        :param return_obspy_stream: Return format is either an
+            :class:`obspy.core.stream.Stream` object or a dictionary
+            containing the raw NumPy arrays.
+        :type dt: float, optional
+        :param dt: Desired sampling rate of the seismograms. Resampling is done
+            using a Lanczos kernel.
+        :type kernelwidth: int, optional
+        :param kernelwidth: The width of the sinc kernel used for resampling in
+            terms of the original sampling interval. Best choose something
+            between 10 and 20.
+
+        :returns: Multi component seismograms.
+        :rtype: A :class:`obspy.core.stream.Stream` object or a dictionary
+            with NumPy arrays as values.
+        """
+        if components is None:
+            components = self.default_components
+
+        source, receiver = self._get_seismograms_sanity_checks(
+            source=source, receiver=receiver, components=components,
+            kind=kind, dt=dt)
+
+        # Call the _get_seismograms() method of the respective implementation.
+        data = self._get_seismograms(source=source, receiver=receiver,
+                                     components=components)
+
+        # we deal with STFs that are of different sampling than the DB
+        duration = (self.info.npts - 1) * self.info.dt
+        new_npts = int(round(duration / source.dt, 6)) + 1
+        new_nfft = int(next_pow_2(new_npts) * 2)
+
+        stf_deconv_map = {
+            0: self.info.sliprate,
+            1: self.info.slip}
+
+        new_dt = source.dt
+
+        if new_dt > self.info.dt:  # we can only upsample the db
+            raise ValueError("dt of the source not compatible")
+
+        stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
+
+        stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                           old_start=0, old_dt=self.info.dt,
+                                           new_start=0, new_dt=new_dt,
+                                           new_npts=new_npts, a=12,
+                                           window="blackman")
+
+        # Can never be negative with the current logic.
+        n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
+
+        if isinstance(source, ForceSource):
+            n_derivative += 1
+
+        if reconvolve_stf and remove_source_shift:
+            raise ValueError("'remove_source_shift' argument not "
+                             "compatible with 'reconvolve_stf'.")
+
+        # Calculate the final time information about the seismograms.
+        time_information = _get_seismogram_times(
+            info=self.info, origin_time=source.origin_time, dt=dt,
+            kernelwidth=kernelwidth, remove_source_shift=remove_source_shift,
+            reconvolve_stf=reconvolve_stf)
+
+        for comp in components:
+            if reconvolve_stf:
+                # We assume here that the sliprate is well-behaved,
+                # e.g. zeros at the boundaries and no energy above the mesh
+                # resolution.
+                if source.dt is None or source.sliprate is None:
+                    raise ValueError("source has no source time function")
+
+                if STF_MAP[self.info.stf] not in [0, 1]:
+                    raise NotImplementedError(
+                        'deconvolution not implemented for stf %s'
+                        % (self.info.stf))
+
+                stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
+
+                #if abs((source.dt - self.info.dt) / self.info.dt) > 1e-7:
+                #    raise ValueError("dt of the source not compatible")
+
+                stf_conv_f = np.fft.rfft(source.sliprate,
+                                         n=new_nfft)
+
+                data_new = lanczos_interpolation(data=data[comp],
+                                             old_start=0, old_dt=self.info.dt,
+                                             new_start=0, new_dt=new_dt,
+                                             new_npts=new_npts, a=12,
+                                             window="blackman")
+
+                #if source.time_shift is not None:
+                #    stf_conv_f *= \
+                #        np.exp(- 1j * rfftfreq(self.info.nfft) *
+                #               2. * np.pi * source.time_shift / self.info.dt)
+
+                # Apply a 5 percent, at least 5 samples taper at the end.
+                # The first sample is guaranteed to be zero in any case.
+                tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
+                taper = np.ones_like(data_new)
+                taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
+                dataf = np.fft.rfft(taper * data_new, n=new_nfft)
+
+                # Ensure numerical stability by not dividing with zero.
+                f = stf_conv_f
+                _l = np.abs(stf_deconv_f)
+                _idx = np.where(_l > 0.0)
+                f[_idx] /= stf_deconv_f[_idx]
+                f[_l == 0] = 0 + 0j
+
+                data[comp] = np.fft.irfft(dataf * f)[:new_npts]
+
+        if dt is not None:
+            if dt > new_dt:
+                raise ValueError("We can only upsample the result.")
+            for comp in components:
+                # We don't need to align a sample to the peak of the source
+                # time function here.
+                new_npts = int(round((len(data[comp]) - 1) *
+                                     new_dt / dt, 6) + 1)
+                data[comp] = lanczos_interpolation(
+                    data=np.require(data[comp],
+                                    requirements=["C"]),
+                    old_start=0, old_dt=new_dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                # The resampling assumes zeros outside the data range. This
+                # does not introduce any errors at the beginning as the data is
+                # actually zero there but it does affect the end. We will
+                # remove all samples that are affected by the boundary
+                # conditions here.
+                #
+                # Also don't cut it for the "identify" interpolation which is
+                # important for testing.
+                if round(dt / new_dt, 6) != 1.0:
+                    affected_area = kernelwidth * new_dt
+                    data[comp] = \
+                        data[comp][
+                        :-int(np.ceil(affected_area / dt))]
+
+        if dt is None:
+            dt_out = new_dt
+        else:
+            dt_out = dt
+
+        # Integrate/differentiate before removing the source shift in
+        # order to reduce boundary effects at the start of the signal.
+        #
+        # NEVER to this before the resampling! The error can be really big.
+        if n_derivative:
+            for comp in components:
+                _diff_and_integrate(n_derivative=n_derivative, data=data,
+                                    comp=comp, dt_out=dt_out)
+
+        # If desired, remove the samples before the peak of the source
+        # time function.
+        if remove_source_shift:
+            for comp in components:
+                data[comp] = data[comp][time_information["ref_sample"]:]
+
+        if return_obspy_stream:
+            return self._convert_to_stream(
+                receiver=receiver, components=components, data=data,
+                dt_out=dt_out, starttime=time_information["starttime"])
+        else:
+            return data
+
 
     @staticmethod
     def _convert_to_stream(receiver, components, data, dt_out, starttime,
