@@ -7,7 +7,7 @@ from obspy.core import Stream, Trace
 import numpy as np
 from math import floor
 import h5py
-
+import warnings
 
 try:
     from mpi4py import MPI
@@ -15,7 +15,9 @@ try:
     rank = comm.Get_rank()
     nprocs = comm.Get_size()
 except:
-    raise Warning("running without MPI, so hybrid_parallel won't work!")
+    warnings.warn("running without MPI, so hybrid_parallel won't work! this "
+                  "is a workaround to use on login nodes and to use all "
+                  "features of instaseis except the hybrid_parallel part")
 
 
 def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
