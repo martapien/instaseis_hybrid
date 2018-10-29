@@ -1,4 +1,3 @@
-from mpi4py import MPI
 from .hybrid import hybrid_prepare_inputs, hybrid_generate_output, hybrid_get_elastic_params
 from .source import HybridSources
 from . import open_db
@@ -8,10 +7,17 @@ from obspy.core import Stream, Trace
 import numpy as np
 from math import floor
 import h5py
+import warnings
 
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-nprocs = comm.Get_size()
+try:
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    nprocs = comm.Get_size()
+except:
+    warnings.warn("running without MPI, so hybrid_parallel won't work! this "
+                  "is a workaround to use on login nodes and to use all "
+                  "features of instaseis except the hybrid_parallel part")
 
 
 def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
