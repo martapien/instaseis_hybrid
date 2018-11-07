@@ -325,6 +325,10 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
 
         return data
 
+    def _get_data_multiple(self, sources, receiver, components, coordinates,
+                           element_info):
+        return NotImplementedError
+
     def _get_params(self, element_info):
 
         ei = element_info
