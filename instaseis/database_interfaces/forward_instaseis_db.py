@@ -246,23 +246,24 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_strain[:, 5] += strain_4[:, 5] * fac_2
 
                 # rotate final_strain to tpr
-                for i in range(len(final_strain)):
-                    final_strain[i, :] = rotations.\
-                        rotate_symm_tensor_voigt_src_to_xyz(
-                        final_strain[i, :], coordinates.phi)
-                    final_strain[i, :] = rotations.\
-                        rotate_symm_tensor_voigt_xyz_src_to_xyz_earth(
-                        final_strain[i, :], source.longitude_rad,
-                        source.colatitude_rad)
-                    final_strain[i, :] = rotations.\
-                        rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(
-                        final_strain[i, :], receiver.longitude_rad,
-                        receiver.colatitude_rad)
-                    if "local" in components:
-                        final_strain[i, :] = \
-                            rotations.hybrid_tensor_tpr_to_local_cartesian(
-                                final_strain[i, :], coords_rotmat,
-                                receiver.longitude, receiver.colatitude)
+                if "local" in components:
+                    final_strain = \
+                        rotations.hybrid_strain_tensor_src_to_local_cartesian(
+                            final_strain, coords_rotmat,
+                            coordinates.phi,
+                            source.longitude_rad,
+                            source.colatitude_rad,
+                            receiver.longitude_rad,
+                            receiver.colatitude_rad)
+                else:
+                    final_strain = \
+                        rotations.hybrid_strain_tensor_src_to_tpr(
+                            final_strain,
+                            coordinates.phi,
+                            source.longitude_rad,
+                            source.colatitude_rad,
+                            receiver.longitude_rad,
+                            receiver.colatitude_rad)
 
                 strain = {}
                 strain['t'] = final_strain[:, 0]

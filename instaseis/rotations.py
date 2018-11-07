@@ -69,7 +69,7 @@ def rotate_symm_tensor_voigt_xyz_earth_to_xyz_src(mt, phi, theta):
 
     # This double matrix product involves number that might differ by 20
     # orders of magnitudes which makes it numerically tricky. Thus we employ
-    # quad precision numbers to make it a bit more stable and reproducable.
+    # quad precision numbers to make it a bit more stable and reproducible.
     R = np.require(R, dtype=np.float128)  # NOQA
     A = np.require(A, dtype=np.float128)  # NOQA
 
@@ -335,18 +335,97 @@ def hybrid_vector_src_to_local_cartesian(v, rot_mat, phi, srclon, srccolat):
     return np.dot(rotmat, v)
 
 
-def hybrid_tensor_tpr_to_local_cartesian(t, rot_mat, phi, theta):
-    A = np.array([[t[0], t[5], t[4]],
-                  [t[5], t[1], t[3]],
-                  [t[4], t[3], t[2]]])
-    # tpr -> global xyz
-    rot_mat_tpr_to_global = tpr_to_xyz_global(phi, theta)
-    mat_tpr_to_loc = np.dot(rot_mat, rot_mat_tpr_to_global)
-    B = np.dot(np.dot(mat_tpr_to_loc, A), mat_tpr_to_loc.T)
+def hybrid_strain_tensor_src_to_local_cartesian(tensor,
+                                                rotmat_xyz_glob_to_loc,
+                                                coords_phi,
+                                                source_lon, source_colat,
+                                                receiver_lon, receiver_colat):
+    # src to src_xyz
+    cp = np.cos(coords_phi)
+    sp = np.sin(coords_phi)
+    rotmat_src_to_src_xyz = np.array([[cp, -sp, 0.],
+                                      [sp, cp, 0],
+                                      [0, 0, 1.]])
+    # xyz_src to xyz_earth
+    ct = np.cos(source_colat)
+    cp = np.cos(source_lon)
+    st = np.sin(source_colat)
+    sp = np.sin(source_lon)
+    rotmat_xyz_src_to_xyz_earth = np.array([[ct * cp, -sp, st * cp],  # NOQA
+                                            [ct * sp, cp, st * sp],
+                                            [-st, 0, ct]])
+    rot_mat = np.dot(rotmat_xyz_src_to_xyz_earth, rotmat_src_to_src_xyz)
+    # xyz_earth to tpr
+    ct = np.cos(receiver_colat)
+    cp = np.cos(receiver_lon)
+    st = np.sin(receiver_colat)
+    sp = np.sin(receiver_lon)
+    rotmat_xyz_earth_to_tpr = np.array([[ct * cp, ct * sp, -st],  # NOQA
+                                        [-sp, cp, 0],
+                                        [st * cp, st * sp, ct]])
+    rot_mat = np.dot(rotmat_xyz_earth_to_tpr, rot_mat)
 
-    return np.require(np.array(
+    rot_mat = np.dot(rot_mat, rotmat_xyz_glob_to_loc)
+
+    for i in range(len(tensor)):
+        t = tensor[i, :]
+        A = np.array([[t[0], t[5], t[4]],
+                      [t[5], t[1], t[3]],
+                      [t[4], t[3], t[2]]])
+
+        B = np.dot(np.dot(rot_mat, A), rot_mat.T)
+        tensor[i, :] = np.require(np.array(
             [B[0, 0], B[1, 1], B[2, 2], B[1, 2], B[0, 2], B[0, 1]]),
-            dtype=np.float64) # xyz_loc
+            dtype=np.float64)
+
+    return tensor # xyz_loc
+
+
+def hybrid_strain_tensor_src_to_tpr(tensor, coords_phi,
+                                source_lon, source_colat,
+                                receiver_lon, receiver_colat):
+    """
+    :param tensor: is the strain in voigt for all time steps,
+        i.e. of shape (nb_tsteps, 6)
+    :return: rotated tensor to tpr
+    """
+    # src to src_xyz
+    cp = np.cos(coords_phi)
+    sp = np.sin(coords_phi)
+    rotmat_src_to_src_xyz = np.array([[cp, -sp, 0.],
+                                      [sp, cp, 0],
+                                      [0, 0, 1.]])
+    # xyz_src to xyz_earth
+    ct = np.cos(source_colat)
+    cp = np.cos(source_lon)
+    st = np.sin(source_colat)
+    sp = np.sin(source_lon)
+    rotmat_xyz_src_to_xyz_earth = np.array([[ct * cp, -sp, st * cp],  # NOQA
+                                            [ct * sp, cp, st * sp],
+                                            [-st, 0, ct]])
+    rot_mat = np.dot(rotmat_xyz_src_to_xyz_earth, rotmat_src_to_src_xyz)
+    # xyz_earth to tpr
+    ct = np.cos(receiver_colat)
+    cp = np.cos(receiver_lon)
+    st = np.sin(receiver_colat)
+    sp = np.sin(receiver_lon)
+    rotmat_xyz_earth_to_tpr = np.array([[ct * cp, ct * sp, -st],  # NOQA
+                                        [-sp, cp, 0],
+                                        [st * cp, st * sp, ct]])
+    rot_mat = np.dot(rotmat_xyz_earth_to_tpr, rot_mat)
+
+    for i in range(len(tensor)):
+        t = tensor[i, :]
+        A = np.array([[t[0], t[5], t[4]],
+                      [t[5], t[1], t[3]],
+                      [t[4], t[3], t[2]]])
+
+        B = np.dot(np.dot(rot_mat, A), rot_mat.T)
+        tensor[i, :] = np.require(np.array(
+            [B[0, 0], B[1, 1], B[2, 2], B[1, 2], B[0, 2], B[0, 1]]),
+            dtype=np.float64)
+
+    return tensor  # tpr
 
 
 def tpr_to_xyz_global(phi, theta):
