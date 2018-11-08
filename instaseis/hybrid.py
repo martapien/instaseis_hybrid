@@ -621,15 +621,17 @@ def _prepare_output_file(dumpfields, dumpcoords, npoints, ntimesteps, precision,
 
     return grp
 
+
 def _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
                            npoints_rank):
 
     end_idx = start_idx + npoints_rank
 
     if "spherical" in inputfile:
+        dset_coords = inputfile['spherical/coordinates']
 
-        coordinates = np.array(
-            inputfile['spherical/coordinates'][start_idx:end_idx, :])  # in tpr
+        with dset_coords.collective:
+            coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in tpr
 
         if dumpcoords == "local":
             coords_rotmat = inputfile['spherical'].attrs['rotmat_xyz_glob_to_loc']
@@ -640,21 +642,26 @@ def _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
         radius_of_box_top = None
 
         if "traction" in dumpfields:
-            normals = inputfile['spherical/normals'][start_idx:end_idx, :]  # in
-            #  tpr
+            dset_norm = inputfile['spherical/normals']
+            with dset_norm.collective:
+                normals = np.array(dset_norm[start_idx:end_idx, :])  # in tpr
         else:
             normals = None
 
     elif "local" in inputfile:
-        coordinates = np.array(
-            inputfile['local/coordinates'][start_idx:end_idx, :])  # in xyz
+
+        dset_coords = inputfile['local/coordinates']
+        with dset_coords.collective:
+            coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
         coords_rotmat = inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
 
         coordinates_local = True
         radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
 
         if "traction" in dumpfields:
-            normals = inputfile['local/normals'][start_idx:end_idx, :] # in xyz
+            dset_norm = inputfile['local/normals']
+            with dset_norm.collective:
+                normals = np.array(dset_norm[start_idx:end_idx, :])  # in xyz
         else:
             normals = None
 
