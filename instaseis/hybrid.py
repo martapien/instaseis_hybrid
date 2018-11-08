@@ -12,70 +12,92 @@ Hybrid classes of Instaseis.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import os
 import numpy as np
 import h5py
 import warnings
-
 from math import floor, ceil
+
 from . import rotations
 from .source import Source, Receiver
 from .helpers import c_ijkl_ani
 from . import open_db
-import os
+
+try:
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    nprocs = comm.Get_size()
+    parallel_active = True
+    warnings.warn("Running with MPI, so hybrid_extraction and "
+                  "hybrid_repropagation work only in parallel mode. You can "
+                  "use all other Instaseis features as usual.")
+except:
+    warnings.warn("Running without MPI, so hybrid_extraction and "
+                  "hybrid_repropagation work only in serial mode. You can use "
+                  "all other Instaseis features as usual.")
+    rank = 0
+    nprocs = 1
+    parallel_active = False
+
 
 WORK_DIR = os.getcwd()
 
 
-def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
-                          time_window=None, remove_source_shift=True,
-                          dumpcoords="spherical",
-                          dumpfields=("velocity", "strain"),
-                          precision='f4',
-                          max_data_buffer_in_mb=1024):
-
-    print("Instaseis: Starting the preparation of inputs for data "
-          "generation....")
-
-    inputs = {}
-    max_data_in_bytes = max_data_buffer_in_mb * 1024 ** 2
+def hybrid_extraction(input_path, output_path, fwd_db_path, dt,
+                      source, time_window=None,
+                      filter_freqs=None, reconvolve_stf=False,
+                      remove_source_shift=True,
+                      dumpcoords="spherical",
+                      dumpfields=("velocity", "strain"),
+                      precision='f4',
+                      max_data_buffer_in_mb=1024):
 
     if dumpcoords != "spherical" and dumpcoords != "local":
         raise NotImplementedError("Can dump only in tpr (spherical) or xyz ("
                                   "(local) coordinates")
 
-    f_in = h5py.File(inputfile, "a")
+    print("Instaseis: Launching output generation on proc %d..." % rank)
 
-    if "spherical" in f_in:
-        coordinates = _read_coordinates(inputfile)
-        if dumpcoords == "local":
-            coords_rotmat = f_in['spherical'].attrs['rotmat_xyz_glob_to_loc']
+    # open the input file either in parallel or normally
+    if input_path.endswith('.hdf5') or not input_path.endswith('.nc'):
+        if parallel_active:
+            inputfile = h5py.File(
+                input_path, "a", driver='mpio', comm=MPI.COMM_WORLD)
         else:
-            coords_rotmat = None
-        coordinates_local = False
-        radius_of_box_top = None
-    elif "local" in f_in:
-        coordinates = _read_coordinates(inputfile)
-        coords_rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
-        coordinates_local = True
-        radius_of_box_top = f_in['local'].attrs['radius_of_box_top']
+            inputfile = h5py.File(input_path, "a")
+    else:
+        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
+
+    # get the total number of points to dump
+    if "spherical" in inputfile:
+        npoints = inputfile['spherical/coordinates'].shape[0]
+    elif "local" in inputfile:
+        npoints = inputfile['local/coordinates'].shape[0]
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
                                   'the 3D solver.')
 
-    if "traction" in dumpfields:
-        if "spherical" in f_in:
-            normals = f_in['spherical/normals'][:, :]  # in tpr
-        elif "local" in f_in:
-            normals = f_in['local/normals'][:, :]
-            # ToDo normals = will need to do it later on where we have
-            # coords in tpr!
+    # define number of points to handle per process
+    if nprocs > 1:
+        points_per_process = int(floor(npoints / nprocs))
+        extra_points = npoints - (points_per_process * nprocs)
+
+        if extra_points == 0:
+            start_idx = points_per_process * rank
+        else:
+            if rank < extra_points:
+                start_idx = (points_per_process + 1) * rank
+                points_per_process += 1
+            else:
+                start_idx = (points_per_process * rank) + extra_points
     else:
-        normals = None
+        start_idx = 0
+        points_per_process = npoints
 
-    npoints = coordinates.shape[0]
-
-    grp = f_in.create_group("Instaseis_medium_params")
+    # create group and datasets for medium parameters in coords file
+    grp = inputfile.create_group("Instaseis_medium_params")
     grp.create_dataset("mu", (npoints,), dtype=precision)
     grp.create_dataset("rho", (npoints,), dtype=precision)
     grp.create_dataset("lambda", (npoints,), dtype=precision)
@@ -83,30 +105,137 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
     grp.create_dataset("phi", (npoints,), dtype=precision)
     grp.create_dataset("eta", (npoints,), dtype=precision)
 
-    f_in.close()
+    # create the output file
+    if parallel_active:
+        outputfile = h5py.File(output_path, "w", driver='mpio', comm=comm)
+    else:
+        outputfile = h5py.File(output_path, "w")
 
-    if time_window is not None:
-        _time_window_bounds_checks(time_window, fwd_db_path)
-        itmin = int(floor(time_window[0] / dt))
-        itmax = int(ceil(time_window[1] / dt))
-        ntimesteps = itmax - itmin
+    _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
+                            source, time_window=time_window,
+                            filter_freqs=filter_freqs,
+                            reconvolve_stf=reconvolve_stf,
+                            remove_source_shift=remove_source_shift,
+                            dumpcoords=dumpcoords,
+                            dumpfields=dumpfields,
+                            precision=precision,
+                            max_data_buffer_in_mb=max_data_buffer_in_mb,
+                            start_idx=start_idx,
+                            npoints_rank=points_per_process,
+                            npoints_tot=npoints)
+
+    print("Instaseis: Done generating and writing output on proc %d!" % rank)
+
+
+def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
+                            source, start_idx, npoints_rank, npoints_tot,
+                            time_window=None,
+                            filter_freqs=None, reconvolve_stf=False,
+                            remove_source_shift=True,
+                            dumpcoords="spherical",
+                            dumpfields=("velocity", "strain"),
+                            precision='f4',
+                            max_data_buffer_in_mb=1024):
+
+    """
+    A method to generate the hdf5 file with the input (background,
+    injected) field for a local hybrid simulation. Dumps displacements,
+    velocities, strains or tractions.
+
+    :param outputfile: A path to the output hdf5/netcdf file that is
+    created, e.g. "/home/user/hybrid_output.hdf5". The output file includes
+    group 'spherical' with datasets corrseponding to dumpfields,
+    e.g. (by default):
+    ['spherical/velocity'] and ['spherical/strain']
+    :type outputfile: hdf5 file
+    :param inputfile: A path to a text or hdf5/netcdf file with spherical/local
+    coordinates of points on the boundary of the local domain of the hybrid
+    method.
+    Hdf5/netcdf file: group spherical with dataset coordinates
+    ([npoints, 3], where the second dimension is tpr, and with attribute
+    nb_points defining the total number of gll boundary points. If
+    coordinates are in the local frame of reference, dataset spherical
+    requires an attribute rotation_matrix for right-multiplication to
+    rotate to tpr.
+    :type inputfile: hdf5 file
+    :param source: The source of the hybrid simulation.
+    :type source: :class: '~instaseis.source.Source' object
+    :param database: A forward Instaseis database to extract fields on the
+    boundary of the local hybrid domain.
+    :type database: :class: '~instaseis.InstaseisDB' object
+    :param dt: Desired sampling rate of the dumped fields. Resampling is
+    done using a Lanczos kernel. If None, defaults to the dt of the
+    daatbase.
+    :type dt: float, optional
+    :param remove_source_shift: Cut all samples before the peak of the
+    source time function. This has the effect that the first sample
+    is the origin time of the source. Defaults to True.
+    :type remove_source_shift: bool, optional
+    :param reconvolve_stf: Deconvolve the source time function used in
+    the AxiSEM run and convolve with the STF attached to the source.
+    For this to be stable, the new STF needs to bandlimited.
+    Defaults to False.
+    :type reconvolve_stf: bool, optional
+    :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter
+    AxiSEM data. Defaults to None.
+    :type filter_freqs: tuple, optional
+    :param dumpfields: Which fields to dump. Must be a tuple
+    containing any combination of ``"displacement"``, ``"velocity"``,
+    ``"strain"``, and ``"traction"``. Defaults to ``"velocity"`` and
+    ``"traction"``.
+    :type dumpfields: tuple of string, optional
+    :param dumpcoords: Which coordinate system do we dump in. Local (
+    cartesian) or global spherical (tpr). Possible options "local" or
+    "spherical", defaults to "spherical".
+    :type dumpcoords: string, optional
+
+    """
+
+    database = open_db(fwd_db_path)
+    if database.info.is_reciprocal:
+        raise ValueError('Extraction of background wavefield requires a '
+                         'forward Instaseis database.')
+
+    # read the coordinates file
+    coordinates, coords_rotmat, coordinates_local, radius_of_box_top, normals =\
+        _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
+                               npoints_rank)
+
+    # we define a new one, as dt=None is something we want later if that's
+    # what it is!
+    if dt is not None:
         dt_hdf5 = dt
+    else:
+        dt_hdf5 = database.info.dt
+
+    # get the number of timesteps
+    if time_window is not None:
+        _time_window_bounds_checks(time_window, database)
+        itmin = int(floor(time_window[0] / dt_hdf5))
+        itmax = int(ceil(time_window[1] / dt_hdf5))
+        ntimesteps = itmax - itmin
         if (time_window[1] - time_window[0]) % dt > 1e-13:
             warnings.warn('The specified time window divided by the specified '
                           'dt is not an integer. The number of time steps '
-                          'to output was rounded to %d' %(ntimesteps))
+                          'to output was rounded to %d' % (ntimesteps))
     else:
-        ntimesteps, dt_hdf5 = _get_ntimesteps(fwd_db_path, dt,
+        ntimesteps, dt_hdf5 = _get_ntimesteps(fwd_db_path, dt_hdf5,
                                               remove_source_shift)
         itmin = 0
         itmax = ntimesteps
-        if dt is not None:
-            dt_hdf5 = dt
 
+    # prepares the group and datasets of the output file
+    grp_coords = _prepare_output_file(
+        dumpfields, dumpcoords, npoints_tot, ntimesteps, precision, dt,
+        outputfile)
+
+    # define how much we store in memory at once
+    max_data_in_bytes = max_data_buffer_in_mb * 1024 ** 2
     ncomp = len(dumpfields) * 3
-    if "strain" or "stress" in dumpfields:
+    if "strain"in dumpfields:
         ncomp += 3
-
+    if "stress"in dumpfields:
+        ncomp += 3
     if precision == 'f4':
         npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) /
                                    ntimesteps))
@@ -116,111 +245,7 @@ def hybrid_prepare_inputs(inputfile, outputfile, fwd_db_path, dt,
     else:
         raise NotImplementedError
 
-    _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
-                     dt_hdf5, outputfile)
-
-    inputs["dt"] = dt
-    inputs["dumpfields"] = dumpfields
-    inputs["dumpcoords"] = dumpcoords
-    inputs["coordinates_local"] = coordinates_local
-    inputs["precision"] = precision
-    inputs["normals"] = normals
-    inputs["npoints"] = npoints
-    inputs["itmin"] = itmin
-    inputs["itmax"] = itmax
-    inputs["ntimesteps"] = ntimesteps
-    inputs["npoints_buf"] = npoints_buf
-    inputs["coords_rotmat"] = coords_rotmat
-    inputs["outputfile"] = outputfile
-    inputs["inputfile"] = inputfile
-    inputs["fwd_db_path"] = fwd_db_path
-    inputs["remove_source_shift"] = remove_source_shift
-    inputs["radius_of_box_top"] = radius_of_box_top
-    print("Instaseis: Done preparing inputs for data generation!")
-
-    return inputs, coordinates
-
-
-def hybrid_generate_output(source, inputs, coordinates,
-                           filter_freqs=None, reconvolve_stf=False,
-                           npoints_rank=None, start_idx=0, comm=None):
-    """
-    A method to generate the hdf5 file with the input (background,
-    injected) field for a local hybrid simulation. Dumps displacements,
-    velocities, strains or tractions.
-
-    :param outputfile: A path to the output hdf5/netcdf file that is
-        created, e.g. "/home/user/hybrid_output.hdf5". The output file includes
-        group 'spherical' with datasets corrseponding to dumpfields,
-        e.g. (by default):
-        ['spherical/velocity'] and ['spherical/strain']
-    :type outputfile: string
-    :param inputfile: A path to a text or hdf5/netcdf file with spherical/local
-        coordinates of points on the boundary of the local domain of the hybrid
-        method.
-        Hdf5/netcdf file: group spherical with dataset coordinates
-        ([npoints, 3], where the second dimension is tpr, and with attribute
-        nb_points defining the total number of gll boundary points. If
-        coordinates are in the local frame of reference, dataset spherical
-        requires an attribute rotation_matrix for right-multiplication to
-        rotate to tpr.
-    :type inputfile: string
-    :param source: The source of the hybrid simulation.
-    :type source: :class: '~instaseis.source.Source' object
-    :param database: A forward Instaseis database to extract fields on the
-        boundary of the local hybrid domain.
-    :type database: :class: '~instaseis.InstaseisDB' object
-    :param dt: Desired sampling rate of the dumped fields. Resampling is
-        done using a Lanczos kernel. If None, defaults to the dt of the
-        daatbase.
-    :type dt: float, optional
-    :param remove_source_shift: Cut all samples before the peak of the
-            source time function. This has the effect that the first sample
-            is the origin time of the source. Defaults to True.
-    :type remove_source_shift: bool, optional
-    :param reconvolve_stf: Deconvolve the source time function used in
-            the AxiSEM run and convolve with the STF attached to the source.
-            For this to be stable, the new STF needs to bandlimited.
-            Defaults to False.
-    :type reconvolve_stf: bool, optional
-    :param filter_freqs: A tuple (freq_min, freq_max) to bandpass filter
-            AxiSEM data. Defaults to None.
-    :type filter_freqs: tuple, optional
-    :param dumpfields: Which fields to dump. Must be a tuple
-            containing any combination of ``"displacement"``, ``"velocity"``,
-            ``"strain"``, and ``"traction"``. Defaults to ``"velocity"`` and
-            ``"traction"``.
-    :type dumpfields: tuple of string, optional
-    :param dumpcoords: Which coordinate system do we dump in. Local (
-    cartesian) or global spherical (tpr). Possible options "local" or
-    "spherical", defaults to "spherical".
-    :type dumpcoords: string, optional
-
-    """
-
-    dt = inputs["dt"]
-    dumpfields = inputs["dumpfields"]
-    dumpcoords = inputs["dumpcoords"]
-    coordinates_local = inputs["coordinates_local"]
-    precision = inputs["precision"]
-    if "traction" in dumpfields:
-        normals = inputs["normals"]
-    npoints = inputs["npoints"]
-    itmax = inputs["itmax"]
-    itmin = inputs["itmin"]
-    npoints_buf = inputs["npoints_buf"]
-    ntimesteps = inputs["ntimesteps"]
-    coords_rotmat = inputs["coords_rotmat"]
-    outputfile = inputs["outputfile"]
-    fwd_db_path = inputs["fwd_db_path"]
-    remove_source_shift = inputs["remove_source_shift"]
-    inputfile = inputs["inputfile"]
-    radius_of_box_top = inputs["radius_of_box_top"][0]
-    database = open_db(fwd_db_path)
-    if database.info.is_reciprocal:
-        raise ValueError('Extraction of background wavefield requires a '
-                         'forward Instaseis database.')
-
+    # prepare a list of receivers from the coordinates
     if coordinates_local:
         receivers = _make_receivers(coordinates, coordinates_local,
                                     rotmat=coords_rotmat,
@@ -236,15 +261,7 @@ def hybrid_generate_output(source, inputs, coordinates,
     # Check the bounds of the receivers vs the database
     receivers = _database_bounds_checks(receivers, database)
 
-    if comm is None:
-        f_out = h5py.File(outputfile, "a")
-        f_coords = h5py.File(inputfile, "a")
-        npoints_rank = npoints
-    else:
-        f_out = h5py.File(outputfile, "a", driver='mpio', comm=comm)
-        f_coords = h5py.File(inputfile, "a", driver='mpio', comm=comm)
-
-    grp_coords = f_out[dumpcoords]
+    # Set the empty arrays for data, and get datasets of the output file
     if "velocity" in dumpfields:
         velocity = np.zeros((npoints_buf, ntimesteps, 3), dtype=precision)
         dset_v = grp_coords["velocity"]
@@ -261,7 +278,8 @@ def hybrid_generate_output(source, inputs, coordinates,
         stress = np.zeros((npoints_buf, ntimesteps, 6), dtype=precision)
         dset_strs = grp_coords["stress"]
 
-    grp_params = f_coords["Instaseis_medium_params"]
+    # get the medium parameters group
+    grp_params = inputfile["Instaseis_medium_params"]
     dset_mu = grp_params["mu"]
     dset_rho = grp_params["rho"]
     dset_lambda = grp_params["lambda"]
@@ -296,7 +314,7 @@ def hybrid_generate_output(source, inputs, coordinates,
 
         if "velocity" in dumpfields:
             velocity[j, :, :] = np.array(data["velocity"][itmin:itmax, :],
-                                    dtype=precision)
+                                         dtype=precision)
 
         if "displacement" in dumpfields:
             disp[j, :, :] = np.array(data["displacement"][itmin:itmax, :],
@@ -304,7 +322,7 @@ def hybrid_generate_output(source, inputs, coordinates,
 
         if "strain" in dumpfields:
             strain[j, :, :] = np.array(data["strain"][itmin:itmax, :],
-                                     dtype=precision)
+                                       dtype=precision)
 
         if "stress" or "traction" in dumpfields:
             params = data["elastic_params"]
@@ -388,39 +406,63 @@ def hybrid_generate_output(source, inputs, coordinates,
 
         if j == (npoints_buf - 1) or i == (npoints_rank - 1):
 
-            dset_mu[start_idx+buf_idx*npoints_buf:start_idx+i+1] = \
-                mu_all[:j+1]
-            dset_rho[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                rho_all[:j+1]
-            dset_lambda[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                lbd_all[:j+1]
-            dset_xi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                xi_all[:j+1]
-            dset_phi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                phi_all[:j+1]
-            dset_eta[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                eta_all[:j+1]
+            # after we have reached a full buffer, we dump into file
+            # collective write is much faster for parallel setups
+            idx1 = start_idx + buf_idx * npoints_buf
+            idx2 = start_idx + i + 1
 
-            if "velocity" in dumpfields:
-                dset_v[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    velocity[:j + 1, :, :]
-            if "displacement" in dumpfields:
-                dset_d[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    disp[:j + 1, :, :]
-            if "strain" in dumpfields:
-                dset_strn[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    strain[:j + 1, :, :]
-            if "traction" in dumpfields:
-                dset_tr[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    traction[:j + 1, :, :]
-            if "stress" in dumpfields:
-                dset_strs[start_idx+buf_idx*npoints_buf:start_idx+i+1, :, :] = \
-                    stress[:j + 1, :, :]
+            if parallel_active:
+                with dset_mu.collective:
+                    dset_mu[idx1:idx2] = mu_all[:j+1]
+                with dset_rho.collective:
+                    dset_rho[idx1:idx2] = rho_all[:j+1]
+                with dset_lambda.collective:
+                    dset_lambda[idx1:idx2] = lbd_all[:j+1]
+                with dset_xi.collective:
+                    dset_xi[idx1:idx2] = xi_all[:j+1]
+                with dset_phi.collective:
+                    dset_phi[idx1:idx2] = phi_all[:j+1]
+                with dset_eta.collective:
+                    dset_eta[idx1:idx2] = eta_all[:j+1]
+
+                if "velocity" in dumpfields:
+                    with dset_v.collective:
+                        dset_v[idx1:idx2, :, :] = velocity[:j + 1, :, :]
+                if "displacement" in dumpfields:
+                    with dset_d.collective:
+                        dset_d[idx2:idx2, :, :] = disp[:j + 1, :, :]
+                if "strain" in dumpfields:
+                    with dset_strn.collective:
+                        dset_strn[idx1:idx2, :, :] = strain[:j + 1, :, :]
+                if "traction" in dumpfields:
+                    with dset_tr.collective:
+                        dset_tr[idx1:idx2, :, :] = traction[:j + 1, :, :]
+                if "stress" in dumpfields:
+                    with dset_strs.collective:
+                        dset_strs[idx1:idx2, :, :] = stress[:j + 1, :, :]
+            else:
+                dset_mu[idx1:idx2] = mu_all[:j + 1]
+                dset_rho[idx1:idx2] = rho_all[:j + 1]
+                dset_lambda[idx1:idx2] = lbd_all[:j + 1]
+                dset_xi[idx1:idx2] = xi_all[:j + 1]
+                dset_phi[idx1:idx2] = phi_all[:j + 1]
+                dset_eta[idx1:idx2] = eta_all[:j + 1]
+
+                if "velocity" in dumpfields:
+                    dset_v[idx1:idx2, :, :] = velocity[:j + 1, :, :]
+                if "displacement" in dumpfields:
+                    dset_d[idx2:idx2, :, :] = disp[:j + 1, :, :]
+                if "strain" in dumpfields:
+                    dset_strn[idx1:idx2, :, :] = strain[:j + 1, :, :]
+                if "traction" in dumpfields:
+                    dset_tr[idx1:idx2, :, :] = traction[:j + 1, :, :]
+                if "stress" in dumpfields:
+                    dset_strs[idx1:idx2, :, :] = stress[:j + 1, :, :]
 
             buf_idx += 1
 
-    f_out.close()
-    f_coords.close()
+    outputfile.close()
+    inputfile.close()
 
 
 def hybrid_get_elastic_params(inputfile, db_path, source=None,
@@ -550,12 +592,10 @@ def hybrid_get_elastic_params(inputfile, db_path, source=None,
     f_in.close()
 
 
-def _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
-                     dt, outputfile):
+def _prepare_output_file(dumpfields, dumpcoords, npoints, ntimesteps, precision,
+                         dt, outputfile):
 
-    f_out = h5py.File(outputfile, "w")
-
-    grp = f_out.create_group(dumpcoords)
+    grp = outputfile.create_group(dumpcoords)
 
     if "velocity" in dumpfields:
         grp.create_dataset("velocity", (npoints, ntimesteps, 3),
@@ -579,23 +619,52 @@ def _prepare_outfile(dumpfields, dumpcoords, npoints, ntimesteps, precision,
     grp.attrs['nb_timesteps'] = ntimesteps
     grp.attrs['dt'] = dt
 
-    f_out.close()
+    return grp
 
+def _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
+                           npoints_rank):
 
-def _read_coordinates(inputfile):
-    if inputfile.endswith('.hdf5') or inputfile.endswith('.nc'):
-        f = h5py.File(inputfile, 'r')
-        if "spherical/coordinates" in f:
-            coordinates = np.array(f['spherical/coordinates'][:, :])  # in tpr
-        elif "local/coordinates" in f:
-            coordinates = np.array(f['local/coordinates'][:, :])  # in tpr
+    end_idx = start_idx + npoints_rank
+
+    if "spherical" in inputfile:
+
+        coordinates = np.array(
+            inputfile['spherical/coordinates'][start_idx:end_idx, :])  # in tpr
+
+        if dumpcoords == "local":
+            coords_rotmat = inputfile['spherical'].attrs['rotmat_xyz_glob_to_loc']
         else:
-            raise ValueError('spherical/coordinates or local/coordinates not '
-                             'found in file')
-        f.close()
+            coords_rotmat = None
+
+        coordinates_local = False
+        radius_of_box_top = None
+
+        if "traction" in dumpfields:
+            normals = inputfile['spherical/normals'][start_idx:end_idx, :]  # in
+            #  tpr
+        else:
+            normals = None
+
+    elif "local" in inputfile:
+        coordinates = np.array(
+            inputfile['local/coordinates'][start_idx:end_idx, :])  # in xyz
+        coords_rotmat = inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
+
+        coordinates_local = True
+        radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
+
+        if "traction" in dumpfields:
+            normals = inputfile['local/normals'][start_idx:end_idx, :] # in xyz
+        else:
+            normals = None
+
     else:
-        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
-    return coordinates
+        raise NotImplementedError('Input file must be either in spherical '
+                                  'coordinates or in local coordinates of'
+                                  'the 3D solver.')
+
+    return coordinates, coords_rotmat, coordinates_local, radius_of_box_top,\
+           normals
 
 
 def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
@@ -660,8 +729,7 @@ def _make_sources(coordinates, coordinates_local=False, rotmat=None,
     return sources
 
 
-def _time_window_bounds_checks(time_window, path_to_db):
-    database = open_db(path_to_db)
+def _time_window_bounds_checks(time_window, database):
     length_in_s = database.info.length
     if time_window[0] > time_window[1]:
         raise ValueError("The time window must be specified via (tmin, tmax)"
@@ -670,8 +738,8 @@ def _time_window_bounds_checks(time_window, path_to_db):
         raise ValueError("The tmin must be greater than 0.")
     if time_window[1] > length_in_s:
         raise ValueError("Specified tmax is %f seconds whereas the database "
-                         "length is only %f seconds." %(time_window[1],
-                                                        length_in_s))
+                         "length is only %f seconds." % (time_window[1],
+                                                         length_in_s))
 
 
 def _database_bounds_checks(receivers, database):
@@ -720,9 +788,12 @@ def _database_bounds_checks(receivers, database):
     return receivers
 
 
-def _get_ntimesteps(path_to_db, dt,
+def _get_ntimesteps(database, dt,
                     remove_source_shift):
-    database = open_db(path_to_db)
+
+    if isinstance(database, str):
+        database = open_db(database)
+
     source = Source.from_strike_dip_rake(latitude=10, longitude=20, M0=1e+21,
                                          strike=32., dip=62., rake=90.,
                                          depth_in_m=100)
@@ -731,4 +802,3 @@ def _get_ntimesteps(path_to_db, dt,
         "displacement"), remove_source_shift=remove_source_shift)
     disp = data["displacement"][:, 0]
     return len(disp), database.info.dt
-
