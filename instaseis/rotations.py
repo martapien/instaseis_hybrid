@@ -355,17 +355,8 @@ def hybrid_strain_tensor_src_to_local_cartesian(tensor,
                                             [ct * sp, cp, st * sp],
                                             [-st, 0, ct]])
     rot_mat = np.dot(rotmat_xyz_src_to_xyz_earth, rotmat_src_to_src_xyz)
-    # xyz_earth to tpr
-    ct = np.cos(receiver_colat)
-    cp = np.cos(receiver_lon)
-    st = np.sin(receiver_colat)
-    sp = np.sin(receiver_lon)
-    rotmat_xyz_earth_to_tpr = np.array([[ct * cp, ct * sp, -st],  # NOQA
-                                        [-sp, cp, 0],
-                                        [st * cp, st * sp, ct]])
-    rot_mat = np.dot(rotmat_xyz_earth_to_tpr, rot_mat)
 
-    rot_mat = np.dot(rot_mat, rotmat_xyz_glob_to_loc)
+    rot_mat = np.dot(rotmat_xyz_glob_to_loc, rot_mat)
 
     for i in range(len(tensor)):
         t = tensor[i, :]
@@ -378,7 +369,7 @@ def hybrid_strain_tensor_src_to_local_cartesian(tensor,
             [B[0, 0], B[1, 1], B[2, 2], B[1, 2], B[0, 2], B[0, 1]]),
             dtype=np.float64)
 
-    return tensor # xyz_loc
+    return tensor  # xyz_loc
 
 
 def hybrid_strain_tensor_src_to_tpr(tensor, coords_phi,
