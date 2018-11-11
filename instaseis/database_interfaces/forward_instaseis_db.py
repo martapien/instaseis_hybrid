@@ -252,9 +252,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                             final_strain, coords_rotmat,
                             coordinates.phi,
                             source.longitude_rad,
-                            source.colatitude_rad,
-                            receiver.longitude_rad,
-                            receiver.colatitude_rad)
+                            source.colatitude_rad)
                 else:
                     final_strain = \
                         rotations.hybrid_strain_tensor_src_to_tpr(

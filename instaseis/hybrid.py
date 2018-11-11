@@ -45,13 +45,10 @@ except:
 WORK_DIR = os.getcwd()
 
 
-def hybrid_extraction(input_path, output_path, fwd_db_path, dt,
-                      source, time_window=None,
-                      filter_freqs=None, reconvolve_stf=False,
-                      remove_source_shift=True,
-                      dumpcoords="spherical",
-                      dumpfields=("velocity", "strain"),
-                      precision='f4',
+def hybrid_extraction(input_path, output_path, fwd_db_path, dt, source,
+                      time_window=None, filter_freqs=None, reconvolve_stf=False,
+                      remove_source_shift=True, dumpcoords="spherical",
+                      dumpfields=("velocity", "strain"), precision='f4',
                       max_data_buffer_in_mb=1024):
 
     if dumpcoords != "spherical" and dumpcoords != "local":
@@ -114,11 +111,10 @@ def hybrid_extraction(input_path, output_path, fwd_db_path, dt,
     print("Instaseis: Done generating and writing output on proc %d!" % rank)
 
 
-def hybrid_repropagation(fields_path, coords_path, receiver,
-                         bwd_db_path, bg_field_file=None,
-                         components=None,
-                         kind='displacement', dt=None,
-                         kernelwidth=12, return_obspy_stream=True):
+def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
+                         bg_field_file=None, components=None, dt=None,
+                         kind='displacement', kernelwidth=12,
+                         return_obspy_stream=True):
 
     if coords_path.endswith('.hdf5') or not coords_path.endswith('.nc'):
         if parallel_active:
@@ -181,7 +177,8 @@ def hybrid_repropagation(fields_path, coords_path, receiver,
 
     f_coords.close()
     f_fields_loc.close()
-    f_fields_bg.close()
+    if f_fields_bg is not None:
+        f_fields_bg.close()
 
     if parallel_active:
         all_data = comm.gather(data, root=0)
@@ -224,13 +221,11 @@ def hybrid_repropagation(fields_path, coords_path, receiver,
 
 def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
                             source, start_idx, npoints_rank, npoints_tot,
-                            time_window=None,
-                            filter_freqs=None, reconvolve_stf=False,
-                            remove_source_shift=True,
+                            time_window=None, filter_freqs=None,
+                            reconvolve_stf=False, remove_source_shift=True,
                             dumpcoords="spherical",
                             dumpfields=("velocity", "strain"),
-                            precision='f4',
-                            max_data_buffer_in_mb=1024):
+                            precision='f4', max_data_buffer_in_mb=1024):
 
     """
     A method to generate the hdf5 file with the input (background,
@@ -702,7 +697,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
                 dset_weight = inputfile['spherical/weights']
                 with dset_weight.collective:
                     coords_file_data["weights"] = \
-                        np.array(dset_weight[start_idx:end_idx, :])  # in tpr
+                        np.array(dset_weight[start_idx:end_idx])  # in tpr
 
     elif "local" in inputfile:
         coords_file_data['coordinate_system'] = 'local'
@@ -735,7 +730,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
                 dset_weight = inputfile['local/weights']
                 with dset_weight.collective:
                     coords_file_data["weights"] = \
-                        np.array(dset_weight[start_idx:end_idx, :])  # in tpr
+                        np.array(dset_weight[start_idx:end_idx])  # in tpr
 
         if type(radius_of_box_top) is np.ndarray:
             radius_of_box_top = radius_of_box_top[0]
@@ -746,7 +741,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
                                   'coordinates or in local coordinates of'
                                   'the 3D solver.')
     if repropagation:
-        grp_medium_params = inputfile['Instaseis_medium_params/mu']
+        grp_medium_params = inputfile['Instaseis_medium_params']
         dset_mu = grp_medium_params['mu']
         with dset_mu.collective:
             mu = dset_mu[start_idx:end_idx]
@@ -763,7 +758,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
         with dset_eta.collective:
             eta = dset_eta[start_idx:end_idx]
         coords_file_data["elastic_parameters"] = \
-            np.array(mu, lbd, xi, phi, eta)
+            np.array([mu, lbd, xi, phi, eta]).T
 
     return coords_file_data
 
@@ -781,7 +776,7 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
     else:
         raise NotImplementedError
 
-    fields_file_data['displ'] = \
+    fields_file_data['displacement'] = \
         grp_fields['displacement'][start_idx:end_idx, :, :]
     fields_file_data['traction'] = None
     fields_file_data['strain'] = None
@@ -988,7 +983,6 @@ def _get_cijkl(elastic_params):
     xi = elastic_params["xi"]
     phi = elastic_params["phi"]
     eta = elastic_params["eta"]
-
     # review only transverse isotropy in this case
     fa_ani_thetal = 0.0
     fa_ani_phil = 0.0

@@ -338,8 +338,7 @@ def hybrid_vector_src_to_local_cartesian(v, rot_mat, phi, srclon, srccolat):
 def hybrid_strain_tensor_src_to_local_cartesian(tensor,
                                                 rotmat_xyz_glob_to_loc,
                                                 coords_phi,
-                                                source_lon, source_colat,
-                                                receiver_lon, receiver_colat):
+                                                source_lon, source_colat):
     # src to src_xyz
     cp = np.cos(coords_phi)
     sp = np.sin(coords_phi)

@@ -975,10 +975,13 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             else:
                 bg_fields = None
 
+            print(coords_data['elastic_parameters'].shape)
+
             sources = HybridSource(
                  coords_data["coordinates"][i, :], coords_data["normals"][i, :],
                  coords_data["weights"][i], loc_f_data['displacement'][i, :, :],
-                 loc_f_data['strain'][i, :, :], coords_data['elastic_params'],
+                 loc_f_data['strain'][i, :, :],
+                 coords_data['elastic_parameters'][i, :],
                  dt_stf, bg_fields=bg_fields, rotmat=rotmat)
 
             # ToDo the params have to be ready before this to build the
