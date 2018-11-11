@@ -17,6 +17,7 @@ import numpy as np
 import h5py
 import warnings
 from math import floor, ceil
+from obspy import Stream, Trace
 
 from . import rotations
 from .source import Source, Receiver
@@ -80,21 +81,7 @@ def hybrid_extraction(input_path, output_path, fwd_db_path, dt,
                                   'the 3D solver.')
 
     # define number of points to handle per process
-    if nprocs > 1:
-        points_per_process = int(floor(npoints / nprocs))
-        extra_points = npoints - (points_per_process * nprocs)
-
-        if extra_points == 0:
-            start_idx = points_per_process * rank
-        else:
-            if rank < extra_points:
-                start_idx = (points_per_process + 1) * rank
-                points_per_process += 1
-            else:
-                start_idx = (points_per_process * rank) + extra_points
-    else:
-        start_idx = 0
-        points_per_process = npoints
+    start_idx, points_per_process = _get_npoints_per_proc(npoints)
 
     # create group and datasets for medium parameters in coords file
     grp = inputfile.create_group("Instaseis_medium_params")
@@ -125,6 +112,114 @@ def hybrid_extraction(input_path, output_path, fwd_db_path, dt,
                             npoints_tot=npoints)
 
     print("Instaseis: Done generating and writing output on proc %d!" % rank)
+
+
+def hybrid_repropagation(fields_path, coords_path, receiver,
+                         bwd_db_path, bg_field_file=None,
+                         components=None,
+                         kind='displacement', dt=None,
+                         kernelwidth=12, return_obspy_stream=True):
+
+    if coords_path.endswith('.hdf5') or not coords_path.endswith('.nc'):
+        if parallel_active:
+            f_coords = h5py.File(
+                coords_path, "r", driver='mpio', comm=MPI.COMM_WORLD)
+            f_fields_loc = h5py.File(
+                fields_path, "r", driver='mpio', comm=MPI.COMM_WORLD)
+            if bg_field_file is not None:
+                f_fields_bg = h5py.File(
+                    bg_field_file, "r", driver='mpio', comm=MPI.COMM_WORLD)
+            else:
+                f_fields_bg = None
+        else:
+            f_coords = h5py.File(coords_path, "r")
+            f_fields_loc = h5py.File(fields_path, "r")
+            if bg_field_file is not None:
+                f_fields_bg = h5py.File(bg_field_file, "r")
+            else:
+                f_fields_bg = None
+    else:
+        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
+
+    # coordinate files and fields files in the same coordinates; bg always
+    # in spherical (required):
+    _files_coordinates_checks(f_coords, f_fields_loc, f_fields_bg)
+
+    # get the total number of points to dump
+    if "spherical" in f_coords:
+        npoints = f_coords['spherical/coordinates'].shape[0]
+    elif "local" in f_coords:
+        npoints = f_coords['local/coordinates'].shape[0]
+    else:
+        raise NotImplementedError('Input file must be either in spherical '
+                                  'coordinates or in local coordinates of'
+                                  'the 3D solver.')
+
+    # define number of points to handle per process
+    start_idx, points_per_process = _get_npoints_per_proc(npoints)
+
+    bwd_db = open_db(bwd_db_path)
+
+    # read the coordinates file
+    coords_data = _read_coordinates_file(f_coords, start_idx,
+                                         points_per_process,
+                                         repropagation=True)
+    # read the file with fields dumped by local solver
+    local_fields_data = _read_local_fields_file(f_fields_loc, start_idx,
+                                                points_per_process)
+
+    # read the file with background fields if provided
+    if f_fields_bg is not None:
+        bg_fields_data = _read_bg_fields_file(f_fields_bg, start_idx,
+                                              points_per_process)
+    else:
+        bg_fields_data = None
+
+    data = bwd_db.get_seismograms_hybrid(
+        receiver, coords_data, local_fields_data, bg_f_data=bg_fields_data,
+        components=components, kind=kind, dt=dt, kernelwidth=kernelwidth)
+
+    f_coords.close()
+    f_fields_loc.close()
+    f_fields_bg.close()
+
+    if parallel_active:
+        all_data = comm.gather(data, root=0)
+    else:
+        all_data = data
+
+    if rank == 0:
+        final_data = {}
+        if components is None:
+            components = bwd_db.default_components
+
+        for i in np.arange(len(all_data)):
+            for comp in components:
+                if comp in final_data:
+                    final_data[comp] += all_data[i][comp]
+                else:
+                    final_data[comp] = all_data[i][comp]
+
+        final_data["delta"] = all_data[0]["delta"]
+        final_data["band_code"] = all_data[0]["band_code"]
+
+        if return_obspy_stream:
+            # Convert to an ObsPy Stream object.
+            st = Stream()
+            for comp in components:
+                tr = Trace(data=final_data[comp],
+                           header={"delta": final_data["delta"],
+                                   "station": receiver.station,
+                                   "network": receiver.network,
+                                   "location": receiver.location,
+                                   "channel": "%sX%s" % (
+                                   final_data["band_code"], comp)})
+                st += tr
+            return st
+        else:
+            return data
+    else:
+        return None
 
 
 def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
@@ -197,9 +292,9 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
                          'forward Instaseis database.')
 
     # read the coordinates file
-    coordinates, coords_rotmat, coordinates_local, radius_of_box_top, normals =\
-        _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
-                               npoints_rank)
+    coords_file_data = _read_coordinates_file(
+        inputfile, start_idx, npoints_rank, dumpcoords=dumpcoords,
+        dumpfields=dumpfields)
 
     # we define a new one, as dt=None is something we want later if that's
     # what it is!
@@ -237,29 +332,20 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
     if "stress"in dumpfields:
         ncomp += 3
     if precision == 'f4':
-        npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) /
-                                   ntimesteps))
+        npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) / ntimesteps))
     elif precision == 'f8':
-        npoints_buf = int(floor(((max_data_in_bytes / 8) / ncomp) /
-                                   ntimesteps))
+        npoints_buf = int(floor(((max_data_in_bytes / 8) / ncomp) / ntimesteps))
     else:
         raise NotImplementedError
 
     # prepare a list of receivers from the coordinates
-    if coordinates_local:
-        receivers = _make_receivers(coordinates, coordinates_local,
-                                    rotmat=coords_rotmat,
-                                    radius_of_box_top=radius_of_box_top)
-        if dumpcoords == "local":
-            # we transpose it to have loc_to_glob, this rotmat is glob_to_loc
-            coords_rotmat = coords_rotmat.T
-        else:
-            coords_rotmat = None
-    else:
-        receivers = _make_receivers(coordinates, coordinates_local)
+    receivers = _make_receivers(coords_file_data['coordinates'], database)
 
-    # Check the bounds of the receivers vs the database
-    receivers = _database_bounds_checks(receivers, database)
+    if dumpcoords == "local":
+        # we transpose it to have loc_to_glob, this rotmat is glob_to_loc
+        coords_rotmat = coords_file_data['rotmat_xyz_glob_to_loc'].T
+    else:
+        coords_rotmat = None
 
     # Set the empty arrays for data, and get datasets of the output file
     if "velocity" in dumpfields:
@@ -325,7 +411,9 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
                                        dtype=precision)
 
         if "stress" or "traction" in dumpfields:
-            params = data["elastic_params"]
+
+            c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, c_46, \
+            c_55, c_66 = _get_cijkl(data["elastic_params"])
 
             # 123 = tpr or 123 = xyz
             e_11 = np.array(data["strain"][itmin:itmax, 0])
@@ -334,43 +422,6 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
             e_32 = np.array(data["strain"][itmin:itmax, 3])
             e_31 = np.array(data["strain"][itmin:itmax, 4])
             e_12 = np.array(data["strain"][itmin:itmax, 5])
-
-            mu = params["mu"]
-            lbd = params["lambda"]
-            xi = params["xi"]
-            phi = params["phi"]
-            eta = params["eta"]
-
-            # review only transverse isotropy in this case
-            fa_ani_thetal = 0.0
-            fa_ani_phil = 0.0
-
-            c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 0, 0, 0, 0)
-            c_12 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 0, 0, 1, 1)
-            c_13 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 0, 0, 2, 2)
-            c_15 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 0, 0, 2, 0)
-            c_22 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 1, 1, 1, 1)
-            c_23 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 1, 1, 2, 2)
-            c_25 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 1, 1, 2, 0)
-            c_33 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 2, 2, 2, 2)
-            c_35 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 2, 2, 2, 0)
-            c_44 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 1, 2, 1, 2)
-            c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 1, 2, 0, 1)
-            c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 2, 0, 2, 0)
-            c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
-                              fa_ani_phil, 0, 1, 0, 1)
 
             stress_tmp = np.zeros((ntimesteps, 6))
 
@@ -389,17 +440,25 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
                 stress[j, :, :] = np.array(stress_tmp[:, :], dtype=precision)
 
             if "traction" in dumpfields:
-                n = normals[i, :]
+                if dumpcoords == 'local' and \
+                        coords_file_data['coordinate_system'] == 'local':
+                    n = coords_file_data['normals'][i, :]
+                elif dumpcoords == 'spherical' and \
+                        coords_file_data['coordinate_system'] == 'spherical':
+                    n = coords_file_data['normals'][i, :]
+                else:
+                    raise NotImplementedError("Sorry, not yet implemented")
+
                 traction_tmp = np.zeros((ntimesteps, 3))
                 traction_tmp[:, 0] = n[0] * stress_tmp[:, 0] + \
-                                 n[1] * stress_tmp[:, 5] + \
-                                 n[2] * stress_tmp[:, 4]
+                                     n[1] * stress_tmp[:, 5] + \
+                                     n[2] * stress_tmp[:, 4]
                 traction_tmp[:, 1] = n[0] * stress_tmp[:, 5] + \
-                                 n[1] * stress_tmp[:, 1] + \
-                                 n[2] * stress_tmp[:, 3]
+                                     n[1] * stress_tmp[:, 1] + \
+                                     n[2] * stress_tmp[:, 3]
                 traction_tmp[:, 2] = n[0] * stress_tmp[:, 4] + \
-                                 n[1] * stress_tmp[:, 3] + \
-                                 n[2] * stress_tmp[:, 2]
+                                     n[1] * stress_tmp[:, 3] + \
+                                     n[2] * stress_tmp[:, 2]
 
                 traction[j, :, :] = np.array(traction_tmp[:, :],
                                              dtype=precision)
@@ -465,58 +524,49 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
     inputfile.close()
 
 
-def hybrid_get_elastic_params(inputfile, db_path, source=None,
-                              npoints_rank=None, start_idx=0, comm=None):
+def hybrid_get_elastic_params(input_path, db_path, source=None, precision='f4'):
 
     print("Instaseis: Extracting elastic parameters....")
 
-    if comm is None:
-        f_in = h5py.File(inputfile, "a")
+    # open the input file either in parallel or normally
+    if input_path.endswith('.hdf5') or not input_path.endswith('.nc'):
+        if parallel_active:
+            inputfile = h5py.File(
+                input_path, "a", driver='mpio', comm=MPI.COMM_WORLD)
+        else:
+            inputfile = h5py.File(input_path, "a")
     else:
-        f_in = h5py.File(inputfile, "a", driver='mpio', comm=comm)
+        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
 
-    if "spherical" in f_in:
-        coordinates = _read_coordinates(inputfile)
-        coordinates_local = False
-        radius_of_box_top = None
-    elif "local" in f_in:
-        coordinates = _read_coordinates(inputfile)
-        coords_rotmat = f_in['local'].attrs['rotmat_xyz_loc_to_glob']
-        coordinates_local = True
-        radius_of_box_top = f_in['local'].attrs['radius_of_box_top']
-
+    # get the total number of points to dump
+    if "spherical" in inputfile:
+        npoints = inputfile['spherical/coordinates'].shape[0]
+    elif "local" in inputfile:
+        npoints = inputfile['local/coordinates'].shape[0]
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
                                   'the 3D solver.')
-    npoints = coordinates.shape[0]
 
-    if comm is None:
-        f_in = h5py.File(inputfile, "a")
-        npoints_rank = npoints
+    # define number of points to handle per process
+    start_idx, points_per_process = _get_npoints_per_proc(npoints)
 
-    precision = 'f4'
+    # read the coordinates file
+    # ToDo verify if OK here
+    coords_file_data = _read_coordinates_file(inputfile, start_idx,
+                                              points_per_process)
+
     max_data_in_bytes = 1024
     ncomp = 6
     ntimesteps = 1
     if precision == 'f4':
-        npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) /
-                                   ntimesteps))
+        npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) / ntimesteps))
     elif precision == 'f8':
-        npoints_buf = int(floor(((max_data_in_bytes / 8) / ncomp) /
-                                   ntimesteps))
+        npoints_buf = int(floor(((max_data_in_bytes / 8) / ncomp) / ntimesteps))
+    else:
+        raise ValueError('Specify single or double precision only')
 
-    
-    """ 
-    grp = f_in["Instaseis_medium_params"]
-    dset_mu = grp["mu"]
-    dset_rho = grp["rho"]
-    dset_lambda = grp["lambda"]
-    dset_xi = grp["xi"]
-    dset_phi = grp["phi"]
-    dset_eta = grp["eta"]
-    """
-    grp = f_in.create_group("Instaseis_medium_params")
+    grp = inputfile.create_group("Instaseis_medium_params")
     dset_mu = grp.create_dataset("mu", (npoints,), dtype=precision)
     dset_rho = grp.create_dataset("rho", (npoints,), dtype=precision)
     dset_lambda = grp.create_dataset("lambda", (npoints,), dtype=precision)
@@ -533,38 +583,22 @@ def hybrid_get_elastic_params(inputfile, db_path, source=None,
 
     database = open_db(db_path)
 
-    if source is None:
-        rec = Receiver(latitude=10.0, longitude=10.0)
-
-        if coordinates_local:
-            sources = _make_sources(coordinates, coordinates_local,
-                                        rotmat=coords_rotmat,
-                                        radius_of_box_top=radius_of_box_top)
-        else:
-            sources = _make_sources(coordinates, coordinates_local)
-
-        sources = _database_bounds_checks(sources, database)
+    if source is not None:
+        receivers = _make_receivers(coords_file_data['coordinates'], database)
 
     else:
-        if coordinates_local:
-            receivers = _make_receivers(coordinates, coordinates_local,
-                                        rotmat=coords_rotmat,
-                                        radius_of_box_top=radius_of_box_top)
-        else:
-            receivers = _make_receivers(coordinates, coordinates_local)
-
-    # Check the bounds of the receivers vs the database
-        receivers = _database_bounds_checks(receivers, database)
+        rec = Receiver(latitude=10.0, longitude=10.0)
+        sources = _make_sources(coords_file_data['coordinates'], database)
 
     buf_idx = 0
-    for i in np.arange(npoints_rank):
+    for i in np.arange(points_per_process):
         j = i - buf_idx * npoints_buf
 
         if source is not None:
             data = database.get_elastic_params(source=source,
-                                               receiver=receivers[start_idx+i])
+                                               receiver=receivers[i])
         else:
-            data = database.get_elastic_params(source=sources[start_idx+i],
+            data = database.get_elastic_params(source=sources[i],
                                                receiver=rec)
 
         mu_all[j] = data["mu"]
@@ -574,22 +608,38 @@ def hybrid_get_elastic_params(inputfile, db_path, source=None,
         phi_all[j] = data["phi"]
         eta_all[j] = data["eta"]
 
-        if j == (npoints_buf - 1) or i == (npoints_rank - 1):
+        if j == (npoints_buf - 1) or i == (points_per_process - 1):
 
-            dset_mu[start_idx+buf_idx*npoints_buf:start_idx+i+1] = \
-                mu_all[:j+1]
-            dset_rho[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                rho_all[:j+1]
-            dset_lambda[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                lbd_all[:j+1]
-            dset_xi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                xi_all[:j+1]
-            dset_phi[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                phi_all[:j+1]
-            dset_eta[start_idx+buf_idx*npoints_buf:start_idx+i+1] =  \
-                eta_all[:j+1]
+            # after we have reached a full buffer, we dump into file
+            # collective write is much faster for parallel setups
+            idx1 = start_idx + buf_idx * npoints_buf
+            idx2 = start_idx + i + 1
+
+            if parallel_active:
+                with dset_mu.collective:
+                    dset_mu[idx1:idx2] = mu_all[:j+1]
+                with dset_rho.collective:
+                    dset_rho[idx1:idx2] = rho_all[:j+1]
+                with dset_lambda.collective:
+                    dset_lambda[idx1:idx2] = lbd_all[:j+1]
+                with dset_xi.collective:
+                    dset_xi[idx1:idx2] = xi_all[:j+1]
+                with dset_phi.collective:
+                    dset_phi[idx1:idx2] = phi_all[:j+1]
+                with dset_eta.collective:
+                    dset_eta[idx1:idx2] = eta_all[:j+1]
+
+            else:
+                dset_mu[idx1:idx2] = mu_all[:j+1]
+                dset_rho[idx1:idx2] = rho_all[:j+1]
+                dset_lambda[idx1:idx2] = lbd_all[:j+1]
+                dset_xi[idx1:idx2] = xi_all[:j+1]
+                dset_phi[idx1:idx2] = phi_all[:j+1]
+                dset_eta[idx1:idx2] = eta_all[:j+1]
+
             buf_idx += 1
-    f_in.close()
+
+    inputfile.close()
 
 
 def _prepare_output_file(dumpfields, dumpcoords, npoints, ntimesteps, precision,
@@ -622,60 +672,161 @@ def _prepare_output_file(dumpfields, dumpcoords, npoints, ntimesteps, precision,
     return grp
 
 
-def _read_coordinates_file(inputfile, dumpfields, dumpcoords, start_idx,
-                           npoints_rank):
+def _read_coordinates_file(inputfile, start_idx, npoints_rank,
+                           dumpfields=(), dumpcoords=(),
+                           repropagation=False):
+    # ToDo can make it more compact here
+    coords_file_data = {}
 
     end_idx = start_idx + npoints_rank
 
     if "spherical" in inputfile:
+        coords_file_data['coordinate_system'] = 'spherical'
+
         dset_coords = inputfile['spherical/coordinates']
-
         with dset_coords.collective:
-            coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in tpr
+            coords_file_data["coordinates"] = \
+                np.array(dset_coords[start_idx:end_idx, :])  # in tpr
 
-        if dumpcoords == "local":
-            coords_rotmat = inputfile['spherical'].attrs['rotmat_xyz_glob_to_loc']
-        else:
-            coords_rotmat = None
+        if dumpcoords == "local" and not repropagation:
+            coords_file_data["rotmat_xyz_glob_to_loc"] = \
+                inputfile['spherical'].attrs['rotmat_xyz_glob_to_loc']
 
-        coordinates_local = False
-        radius_of_box_top = None
-
-        if "traction" in dumpfields:
+        if "traction" in dumpfields or repropagation:
             dset_norm = inputfile['spherical/normals']
             with dset_norm.collective:
-                normals = np.array(dset_norm[start_idx:end_idx, :])  # in tpr
-        else:
-            normals = None
+                coords_file_data["normals"] = \
+                    np.array(dset_norm[start_idx:end_idx, :])  # in tpr
+
+            if repropagation:
+                dset_weight = inputfile['spherical/weights']
+                with dset_weight.collective:
+                    coords_file_data["weights"] = \
+                        np.array(dset_weight[start_idx:end_idx, :])  # in tpr
 
     elif "local" in inputfile:
+        coords_file_data['coordinate_system'] = 'local'
 
         dset_coords = inputfile['local/coordinates']
         with dset_coords.collective:
-            coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
-        coords_rotmat = inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
+           coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
 
-        coordinates_local = True
+        coords_file_data["rotmat_xyz_glob_to_loc"] = \
+            inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
+        # radius of the Earth OR radius of box top if at depth
         radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
+        # review [0] index for the above i.e. .attrs['radius_of_box_top'][0] ?
+        coordinates[:, 2] += radius_of_box_top
+        coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
+            coordinates, coords_file_data["rotmat_xyz_glob_to_loc"])
 
-        if "traction" in dumpfields:
+        coords_file_data["coordinates"] = coordinates
+
+        if "traction" in dumpfields or repropagation:
             dset_norm = inputfile['local/normals']
             with dset_norm.collective:
-                normals = np.array(dset_norm[start_idx:end_idx, :])  # in xyz
-        else:
-            normals = None
+                coords_file_data["normals"] = \
+                    np.array(dset_norm[start_idx:end_idx, :])  # in xyz
+                # Note that we don't rotate normals here, as it's a waste of
+                # time and adds an extra loop; we do that later in the
+                # get_seismograms_hybrid
 
+            if repropagation:
+                dset_weight = inputfile['local/weights']
+                with dset_weight.collective:
+                    coords_file_data["weights"] = \
+                        np.array(dset_weight[start_idx:end_idx, :])  # in tpr
+
+        if type(radius_of_box_top) is np.ndarray:
+            radius_of_box_top = radius_of_box_top[0]
+
+        coords_file_data["radius_of_box_top"] = radius_of_box_top
     else:
         raise NotImplementedError('Input file must be either in spherical '
                                   'coordinates or in local coordinates of'
                                   'the 3D solver.')
+    if repropagation:
+        grp_medium_params = inputfile['Instaseis_medium_params/mu']
+        dset_mu = grp_medium_params['mu']
+        with dset_mu.collective:
+            mu = dset_mu[start_idx:end_idx]
+        dset_lbd = grp_medium_params['lambda']
+        with dset_lbd.collective:
+            lbd = dset_lbd[start_idx:end_idx]
+        dset_xi = grp_medium_params['xi']
+        with dset_xi.collective:
+            xi = dset_xi[start_idx:end_idx]
+        dset_phi = grp_medium_params['phi']
+        with dset_phi.collective:
+            phi = dset_phi[start_idx:end_idx]
+        dset_eta = grp_medium_params['eta']
+        with dset_eta.collective:
+            eta = dset_eta[start_idx:end_idx]
+        coords_file_data["elastic_parameters"] = \
+            np.array(mu, lbd, xi, phi, eta)
 
-    return coordinates, coords_rotmat, coordinates_local, radius_of_box_top,\
-           normals
+    return coords_file_data
 
 
-def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
-                    radius_of_box_top=None):
+def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
+    fields_file_data = {}
+    end_idx = start_idx + npoints_rank
+
+    if "spherical" in fieldsfile:
+        grp_fields = fieldsfile['spherical']
+        fields_file_data['coordinate_system'] = 'spherical'
+    elif "local" in fieldsfile:
+        grp_fields = fieldsfile['local']
+        fields_file_data['coordinate_system'] = 'local'
+    else:
+        raise NotImplementedError
+
+    fields_file_data['displ'] = \
+        grp_fields['displacement'][start_idx:end_idx, :, :]
+    fields_file_data['traction'] = None
+    fields_file_data['strain'] = None
+
+    if 'traction' in grp_fields:
+        fields_file_data['traction'] = \
+            grp_fields['traction'][start_idx:end_idx, :, :]
+    elif 'strain' in grp_fields:
+        fields_file_data['strain'] = \
+            grp_fields['strain'][start_idx:end_idx, :, :]
+    else:
+        ValueError("Need strains or tractions to repropagate field via "
+                   "hybrid sources.")
+
+    dt = grp_fields.attrs['dt']
+
+    # When extracting from hdf5, dt is a float. When extracting from
+    # netcdf, dt is a numpy array of length 1.
+    if type(dt) is np.ndarray:
+        dt = dt[0]
+
+    fields_file_data['dt'] = dt
+
+    return fields_file_data
+
+
+def _read_bg_fields_file(fieldsfile, start_idx, npoints_rank):
+    fields_file_data = {}
+    end_idx = start_idx + npoints_rank
+
+    if "spherical" not in fieldsfile:
+        raise NotImplementedError("Background field need to be in spherical "
+                                  "coordinates")
+
+    grp_fields = fieldsfile['spherical']
+
+    fields_file_data['velocity'] = \
+        grp_fields['velocity'][start_idx:end_idx, :, :]
+    fields_file_data['stress'] = \
+        grp_fields['stress'][start_idx:end_idx, :, :]
+
+    return fields_file_data
+
+
+def _make_receivers(coordinates, database):
     """
     Method to handle hybrid boundary input (in spherical coordinates) defined
     by the mesh of a local solver.
@@ -685,15 +836,6 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
     receivers = []
     items = coordinates.shape[0]
 
-    if coordinates_local:
-        if rotmat is None or radius_of_box_top is None:
-            raise ValueError("Need a rotation matrix in local coordinates and"
-                             " the radius of the top of the box!")
-        coordinates[:, 2] += radius_of_box_top
-        # radius of the Earth OR radius of box top if at depth
-        coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
-            coordinates, rotmat)
-    # f = open("coordinates_spherical.txt", 'w')
     for i in np.arange(items):
         lat = 90.0 - coordinates[i, 0]
         lon = coordinates[i, 1]
@@ -702,26 +844,17 @@ def _make_receivers(coordinates, coordinates_local=False, rotmat=None,
             latitude=lat,
             longitude=lon,
             depth_in_m=dep))
-        
-        # f.write("lat: %f  lon: %f  depth: %f \n" %(lat, lon, dep))
-    # f.close()
+
+    # Check the bounds of the receivers vs the database
+    receivers = _database_bounds_checks(receivers, database)
+
     return receivers
 
 
-def _make_sources(coordinates, coordinates_local=False, rotmat=None,
-                  radius_of_box_top=None):
+def _make_sources(coordinates, database):
     sources = []
     items = coordinates.shape[0]
 
-    if coordinates_local:
-        if rotmat is None or radius_of_box_top is None:
-            raise ValueError("Need a rotation matrix in local coordinates and"
-                             " the radius of the top of the box!")
-        coordinates[:, 2] += radius_of_box_top
-        # radius of the Earth OR radius of box top if at depth
-        coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
-            coordinates, rotmat)
-    # f = open("coordinates_spherical.txt", 'w')
     for i in np.arange(items):
         lat = 90.0 - coordinates[i, 0]
         lon = coordinates[i, 1]
@@ -731,8 +864,8 @@ def _make_sources(coordinates, coordinates_local=False, rotmat=None,
             longitude=lon,
             depth_in_m=dep))
 
-        # f.write("lat: %f  lon: %f  depth: %f \n" %(lat, lon, dep))
-    # f.close()
+    sources = _database_bounds_checks(sources, database)
+
     return sources
 
 
@@ -795,6 +928,23 @@ def _database_bounds_checks(receivers, database):
     return receivers
 
 
+def _files_coordinates_checks(f_coords, f_fields_loc, f_fields_bg=None):
+
+    if (('spherical' in f_coords) and ('spherical' not in f_fields_loc)) \
+        or (('local' in f_coords) and ('local' not in f_fields_loc)) \
+        or (('spherical' in f_fields_loc) and ('spherical' not in f_coords)) \
+        or (('local' in f_fields_loc) and ('local' not in f_coords)):
+            raise NotImplementedError("Only spherical or local groups "
+                                      "allowed. Both files must have the same "
+                                      "groups, i.e. be in the same "
+                                      "coordinates.")
+
+    if f_fields_bg is not None:
+        if 'spherical' not in f_fields_bg:
+            raise NotImplementedError("Background field must be in spherical "
+                                      "coordinates")
+
+
 def _get_ntimesteps(database, dt,
                     remove_source_shift):
 
@@ -809,3 +959,66 @@ def _get_ntimesteps(database, dt,
         "displacement"), remove_source_shift=remove_source_shift)
     disp = data["displacement"][:, 0]
     return len(disp), database.info.dt
+
+
+def _get_npoints_per_proc(npoints):
+
+    if nprocs > 1:
+        points_per_process = int(floor(npoints / nprocs))
+        extra_points = npoints - (points_per_process * nprocs)
+
+        if extra_points == 0:
+            start_idx = points_per_process * rank
+        else:
+            if rank < extra_points:
+                start_idx = (points_per_process + 1) * rank
+                points_per_process += 1
+            else:
+                start_idx = (points_per_process * rank) + extra_points
+    else:
+        start_idx = 0
+        points_per_process = npoints
+
+    return start_idx, points_per_process
+
+
+def _get_cijkl(elastic_params):
+    mu = elastic_params["mu"]
+    lbd = elastic_params["lambda"]
+    xi = elastic_params["xi"]
+    phi = elastic_params["phi"]
+    eta = elastic_params["eta"]
+
+    # review only transverse isotropy in this case
+    fa_ani_thetal = 0.0
+    fa_ani_phil = 0.0
+
+    c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 0, 0, 0, 0)
+    c_12 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 0, 0, 1, 1)
+    c_13 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 0, 0, 2, 2)
+    c_15 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 0, 0, 2, 0)
+    c_22 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 1, 1, 1, 1)
+    c_23 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 1, 1, 2, 2)
+    c_25 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 1, 1, 2, 0)
+    c_33 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 2, 2, 2, 2)
+    c_35 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 2, 2, 2, 0)
+    c_44 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 1, 2, 1, 2)
+    c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 1, 2, 0, 1)
+    c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 2, 0, 2, 0)
+    c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                      fa_ani_phil, 0, 1, 0, 1)
+
+    return c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, \
+           c_46, c_55, c_66

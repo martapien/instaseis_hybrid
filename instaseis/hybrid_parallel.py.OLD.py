@@ -1,97 +1,83 @@
-from .hybrid import _hybrid_generate_output, hybrid_get_elastic_params, \
-    _get_ntimesteps, _prepare_output_file
+from .hybrid import hybrid_prepare_inputs, _hybrid_generate_output, \
+    hybrid_get_elastic_params
+from .source import HybridSources
 from . import open_db
 from obspy.core import Stream, Trace
 
-
 import numpy as np
-from math import floor, ceil
+from math import floor
 import h5py
 import warnings
 
 try:
     from mpi4py import MPI
+
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     nprocs = comm.Get_size()
-    parallel_feature = True
 except:
-    warnings.warn("Running without MPI, so hybrid_extraction_parallel won't "
-                  "work! You can use all Instaseis features")
-    parallel_feature = False
+    warnings.warn("running without MPI, so hybrid_parallel won't work! this "
+                  "is a workaround to use on login nodes and to use all "
+                  "features of instaseis except the hybrid_parallel part")
 
 
-def hybrid_extraction_parallel(input_path, output_path, fwd_db_path, dt,
-                               source, time_window=None,
-                               filter_freqs=None, reconvolve_stf=False,
-                               remove_source_shift=True,
-                               dumpcoords="spherical",
-                               dumpfields=("velocity", "strain"),
-                               precision='f4',
-                               max_data_buffer_in_mb=1024):
+def hybrid_generate_output_parallel(inputfile, outputfile, fwd_db_path, dt,
+                                    source, time_window=None,
+                                    filter_freqs=None, reconvolve_stf=False,
+                                    remove_source_shift=True,
+                                    dumpcoords="spherical",
+                                    dumpfields=("velocity", "strain"),
+                                    precision='f4',
+                                    max_data_buffer_in_mb=1024):
+    if rank == 0:
+        inputs, coordinates_send = hybrid_prepare_inputs(
+            inputfile, outputfile, fwd_db_path, dt, time_window,
+            remove_source_shift, dumpcoords, dumpfields, precision,
+            max_data_buffer_in_mb)
+
+        npoints_rank = int(floor(inputs["npoints"] / nprocs))
+        start_idx = 0
+        coordinates = np.array(coordinates_send[:npoints_rank],
+                               dtype=np.float32)
+        print('Instaseis: Proc %d sending info to other procs...' % rank)
+        for i in np.arange(1, nprocs):
+            start_idx_send = i * npoints_rank
+            tag1 = i + 10
+            tag2 = i + 20
+            tag3 = i + 30
+            if i < (nprocs - 1):
+                send = coordinates_send[start_idx_send:(i + 1) * npoints_rank]
+                comm.send(npoints_rank, dest=i, tag=tag2)
+                comm.send(start_idx_send, dest=i, tag=tag3)
+                comm.Send(send, dest=i, tag=tag1)
+            else:
+                send = coordinates_send[start_idx_send:]
+                npoints_rank_new = npoints_rank + (inputs["npoints"] % nprocs)
+                comm.send(npoints_rank_new, dest=i, tag=tag2)
+                comm.send(start_idx_send, dest=i, tag=tag3)
+                comm.Send(send, dest=i, tag=tag1)
+        print('Instaseis: Proc %d done sending info!' % rank)
+
+    else:
+        tag1 = rank + 10
+        tag2 = rank + 20
+        tag3 = rank + 30
+        npoints_rank = comm.recv(source=0, tag=tag2)
+        start_idx = comm.recv(source=0, tag=tag3)
+        coordinates = np.empty((npoints_rank, 3), dtype=np.float32)
+        comm.Recv(coordinates, source=0, tag=tag1)
+        print('Instaseis: Proc %d received info!' % rank)
+        inputs = None
+
+    inputs = comm.bcast(inputs, root=0)
 
     print("Instaseis: Launching output generation on proc %d..." % rank)
 
-    # open input file in parallel
-    if input_path.endswith('.hdf5') or not input_path.endswith('.nc'):
-        inputfile = h5py.File(
-            input_path, "a", driver='mpio', comm=MPI.COMM_WORLD)
-    else:
-        raise NotImplementedError('Provide input as hdf5 or netcdf file.')
-
-    # get total number of coordinate points
-    if "spherical" in inputfile:
-        npoints = inputfile['spherical/coordinates'].shape[0]
-    elif "local" in inputfile:
-        npoints = inputfile['local/coordinates'].shape[0]
-    else:
-        raise NotImplementedError('Input file must be either in spherical '
-                                  'coordinates or in local coordinates of'
-                                  'the 3D solver.')
-
-    # define number of points to handle per process
-    if nprocs > 1:
-        points_per_process = int(floor(npoints / nprocs))
-        extra_points = npoints - (points_per_process * nprocs)
-
-        if extra_points == 0:
-            start_idx = points_per_process * rank
-        else:
-            if rank < extra_points:
-                start_idx = (points_per_process + 1) * rank
-                points_per_process += 1
-            else:
-                start_idx = (points_per_process * rank) + extra_points
-    else:
-        start_idx = 0
-        points_per_process = npoints
-
-    # collectively create group and datasets for medium parameters in the
-    # coords file
-    grp = inputfile.create_group("Instaseis_medium_params")
-    grp.create_dataset("mu", (npoints,), dtype=precision)
-    grp.create_dataset("rho", (npoints,), dtype=precision)
-    grp.create_dataset("lambda", (npoints,), dtype=precision)
-    grp.create_dataset("xi", (npoints,), dtype=precision)
-    grp.create_dataset("phi", (npoints,), dtype=precision)
-    grp.create_dataset("eta", (npoints,), dtype=precision)
-
-
-
-    outputfile = h5py.File(output_path, "a", driver='mpio', comm=comm)
-
-
-    _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
-                            source, time_window=time_window,
+    _hybrid_generate_output(source, inputs, coordinates,
                             filter_freqs=filter_freqs,
                             reconvolve_stf=reconvolve_stf,
-                            remove_source_shift=remove_source_shift,
-                            dumpcoords=dumpcoords,
-                            dumpfields=dumpfields,
-                            precision=precision,
-                            max_data_buffer_in_mb=max_data_buffer_in_mb,
-                            start_idx=start_idx,
-                            npoints_rank=points_per_process)
+                            npoints_rank=npoints_rank,
+                            start_idx=start_idx, comm=comm)
 
     print("Instaseis: Done generating and writing output on proc %d!" % rank)
 
@@ -102,7 +88,6 @@ def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
                                     kind='displacement', dt=None,
                                     filter_freqs=None,
                                     kernelwidth=12, return_obspy_stream=True):
-
     if rank == 0:
         f_coords = h5py.File(coordsfile, "r")
 
@@ -182,7 +167,8 @@ def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
                                    "station": receiver.station,
                                    "network": receiver.network,
                                    "location": receiver.location,
-                                   "channel": "%sX%s" % (final_data["band_code"], comp)})
+                                   "channel": "%sX%s" % (
+                                   final_data["band_code"], comp)})
                 st += tr
             return st
         else:
@@ -192,13 +178,11 @@ def hybrid_get_seismograms_parallel(fieldsfile, coordsfile, receiver,
 
 
 def hybrid_get_elastic_params_parallel(coordsfile, db_path, source=None):
-
-
     if rank == 0:
 
         f_in = h5py.File(coordsfile, "a")
         npoints = f_in['local'].attrs['nb_points']
-        
+
         npoints_rank = int(floor(npoints / nprocs))
         start_idx = 0
 
@@ -208,7 +192,7 @@ def hybrid_get_elastic_params_parallel(coordsfile, db_path, source=None):
             tag3 = i + 30
             if i < (nprocs - 1):
                 comm.send(npoints_rank, dest=i, tag=tag2)
-                comm.send(start_idx_send, dest=i, tag=tag3) 
+                comm.send(start_idx_send, dest=i, tag=tag3)
             else:
                 npoints_rank_new = npoints_rank + (npoints % nprocs)
                 comm.send(npoints_rank_new, dest=i, tag=tag2)
@@ -220,7 +204,7 @@ def hybrid_get_elastic_params_parallel(coordsfile, db_path, source=None):
         tag3 = rank + 30
         npoints_rank = comm.recv(source=0, tag=tag2)
         start_idx = comm.recv(source=0, tag=tag3)
-    
+
     hybrid_get_elastic_params(coordsfile, db_path, source=source,
                               npoints_rank=npoints_rank,
                               start_idx=start_idx, comm=comm)

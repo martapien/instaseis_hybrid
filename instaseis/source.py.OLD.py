@@ -49,6 +49,7 @@ def _purge_duplicates(f):
     Simple decorator removing duplicates in the returned list. Preserves the
     order and will remove duplicates occuring later in the list.
     """
+
     @functools.wraps(f)
     def wrapper(*args, **kwds):
         ret_val = f(*args, **kwds)
@@ -58,6 +59,7 @@ def _purge_duplicates(f):
                 continue
             new_list.append(item)
         return new_list
+
     return wrapper
 
 
@@ -110,15 +112,15 @@ def fault_vectors_lmn(strike, dip, rake):
     n = np.empty(3)
 
     l[0] = np.cos(lambd) * np.cos(phi) \
-        + np.cos(delta) * np.sin(lambd) * np.sin(phi)
+           + np.cos(delta) * np.sin(lambd) * np.sin(phi)
     l[1] = np.cos(lambd) * np.sin(phi) \
-        - np.cos(delta) * np.sin(lambd) * np.cos(phi)
+           - np.cos(delta) * np.sin(lambd) * np.cos(phi)
     l[2] = - np.sin(delta) * np.sin(lambd)
 
     m[0] = - np.sin(lambd) * np.cos(phi) \
-        + np.cos(delta) * np.cos(lambd) * np.sin(phi)
+           + np.cos(delta) * np.cos(lambd) * np.sin(phi)
     m[1] = - np.sin(lambd) * np.sin(phi) \
-        - np.cos(delta) * np.cos(lambd) * np.cos(phi)
+           - np.cos(delta) * np.cos(lambd) * np.cos(phi)
     m[2] = - np.sin(delta) * np.cos(lambd)
 
     n[0] = - np.sin(delta) * np.sin(phi)
@@ -248,17 +250,17 @@ class SourceOrReceiver(object):
 
     def x(self, planet_radius=6371e3):
         return np.cos(np.deg2rad(self.latitude)) * \
-            np.cos(np.deg2rad(self.longitude)) * \
-            self.radius_in_m(planet_radius=planet_radius)
+               np.cos(np.deg2rad(self.longitude)) * \
+               self.radius_in_m(planet_radius=planet_radius)
 
     def y(self, planet_radius=6371e3):
         return np.cos(np.deg2rad(self.latitude)) * \
-            np.sin(np.deg2rad(self.longitude)) * \
-            self.radius_in_m(planet_radius=planet_radius)
+               np.sin(np.deg2rad(self.longitude)) * \
+               self.radius_in_m(planet_radius=planet_radius)
 
     def z(self, planet_radius=6371e3):
         return np.sin(np.deg2rad(self.latitude)) * \
-            self.radius_in_m(planet_radius=planet_radius)
+               self.radius_in_m(planet_radius=planet_radius)
 
 
 class SourceTimeFunction(object):
@@ -309,7 +311,8 @@ class SourceTimeFunction(object):
         """
         self.sliprate = np.zeros(nsamp)
         self.sliprate[0] = 1.0 / dt
-        self.sliprate = lowpass(self.sliprate, freq, 1./dt, corners, zerophase)
+        self.sliprate = lowpass(self.sliprate, freq, 1. / dt, corners,
+                                zerophase)
         self.dt = dt
 
     def normalize_sliprate(self):
@@ -319,7 +322,7 @@ class SourceTimeFunction(object):
         self.sliprate /= np.trapz(self.sliprate, dx=self.dt)
 
     def lp_sliprate(self, freq, corners=4, zerophase=False):
-        self.sliprate = lowpass(self.sliprate, freq, 1./self.dt, corners,
+        self.sliprate = lowpass(self.sliprate, freq, 1. / self.dt, corners,
                                 zerophase)
 
 
@@ -328,6 +331,7 @@ class Source(SourceOrReceiver, SourceTimeFunction):
     Class to handle a seismic moment tensor source including a source time
     function.
     """
+
     def __init__(self, latitude, longitude, depth_in_m=None, m_rr=0.0,
                  m_tt=0.0, m_pp=0.0, m_rt=0.0, m_rp=0.0, m_tp=0.0,
                  time_shift=None, sliprate=None, dt=None,
@@ -470,9 +474,9 @@ class Source(SourceOrReceiver, SourceTimeFunction):
 
     @classmethod
     def from_strike_dip_rake(  # NOQA
-        cls, latitude, longitude, depth_in_m, strike, dip, rake, M0,
-        time_shift=None, sliprate=None, dt=None,
-        origin_time=obspy.UTCDateTime(0)):
+            cls, latitude, longitude, depth_in_m, strike, dip, rake, M0,
+            time_shift=None, sliprate=None, dt=None,
+            origin_time=obspy.UTCDateTime(0)):
         """
         Initialize a source object from a shear source parameterized by strike,
         dip and rake.
@@ -527,10 +531,10 @@ class Source(SourceOrReceiver, SourceTimeFunction):
         lambd = np.deg2rad(rake)
 
         m_tt = (- np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
-                np.sin(2. * delta) * np.sin(phi)**2. * np.sin(lambd)) * M0
+                np.sin(2. * delta) * np.sin(phi) ** 2. * np.sin(lambd)) * M0
 
         m_pp = (np.sin(delta) * np.cos(lambd) * np.sin(2. * phi) -
-                np.sin(2. * delta) * np.cos(phi)**2. * np.sin(lambd)) * M0
+                np.sin(2. * delta) * np.cos(phi) ** 2. * np.sin(lambd)) * M0
 
         m_rr = (np.sin(2. * delta) * np.sin(lambd)) * M0
 
@@ -542,7 +546,7 @@ class Source(SourceOrReceiver, SourceTimeFunction):
 
         m_tp = (- np.sin(delta) * np.cos(lambd) * np.cos(2. * phi) -
                 np.sin(2. * delta) * np.sin(2. * phi) * np.sin(lambd) / 2.) * \
-            M0
+               M0
 
         source = cls(latitude, longitude, depth_in_m, m_rr, m_tt, m_pp, m_rt,
                      m_rp, m_tp, time_shift, sliprate, dt,
@@ -644,6 +648,7 @@ class ForceSource(SourceOrReceiver, SourceTimeFunction):
         Ft        :   0.00e+00 N
         Fp        :   0.00e+00 N
     """
+
     def __init__(self, latitude, longitude, depth_in_m=None, f_r=0., f_t=0.,
                  f_p=0., origin_time=obspy.UTCDateTime(0), sliprate=None,
                  time_shift=None, dt=None):
@@ -791,6 +796,7 @@ class Receiver(SourceOrReceiver):
         Station   : CDE
         Location  : SY
     """
+
     def __init__(self, latitude, longitude, network=None, station=None,
                  location=None, depth_in_m=None):
         super(Receiver, self).__init__(latitude, longitude,
@@ -904,7 +910,7 @@ class Receiver(SourceOrReceiver):
                 raise ReceiverParseError("ObsPy Trace must have an sac "
                                          "attribute.")
             if "stla" not in filename_or_obj.stats.sac or \
-                    "stlo" not in filename_or_obj.stats.sac:
+                            "stlo" not in filename_or_obj.stats.sac:
                 raise ReceiverParseError(
                     "SAC file does not contain coordinates for channel '%s'" %
                     filename_or_obj.id)
@@ -1003,6 +1009,7 @@ class FiniteSource(object):
     :param hypocenter_depth_in_m: The hypocentral depth in m.
     :type hypocenter_depth_in_m: float, optional
     """
+
     def __init__(self, pointsources=None, CMT=None, magnitude=None,  # NOQA
                  event_duration=None, hypocenter_longitude=None,
                  hypocenter_latitude=None, hypocenter_depth_in_m=None):
@@ -1092,8 +1099,8 @@ class FiniteSource(object):
                 rake, slip1, nt1, slip2, nt2, slip3, nt3 = \
                     map(float, f.readline().split())
 
-                dep *= 1e3     # km   > m
-                area *= 1e-4   # cm^2 > m^2
+                dep *= 1e3  # km   > m
+                area *= 1e-4  # cm^2 > m^2
                 slip1 *= 1e-2  # cm   > m
                 slip2 *= 1e-2  # cm   > m
                 # slip3 *= 1e-2  # cm   > m
@@ -1217,7 +1224,7 @@ class FiniteSource(object):
 
                 # Lat. Lon. depth slip rake strike dip t_rup t_ris t_fal mo
                 (lat, lon, dep, slip, rake, stk, dip, tinit, trise, tfall,
-                    M0) = map(float, line.split())
+                 M0) = map(float, line.split())
 
                 # Negative rupture times are not supported with the current
                 # logic.
@@ -1238,9 +1245,9 @@ class FiniteSource(object):
                 # Convert latitude to a geocentric latitude.
                 lat = elliptic_to_geocentric_latitude(lat)
 
-                dep *= 1e3    # km > m
+                dep *= 1e3  # km > m
                 slip *= 1e-2  # cm > m
-                M0 *= 1e-7    # dyn / cm > N * m
+                M0 *= 1e-7  # dyn / cm > N * m
 
                 # These checks also take care of negative times.
                 if trise < trise_min:
@@ -1329,7 +1336,7 @@ class FiniteSource(object):
 
         # create point sources in cartesian coordinates
         src_xyz = centroid_xyz.repeat(nsources).reshape((3, nsources)) \
-            + np.outer(l_xyz, xi1_mesh) + np.outer(m_xyz, xi2_mesh)
+                  + np.outer(l_xyz, xi1_mesh) + np.outer(m_xyz, xi2_mesh)
 
         # transform to lat, lon, depth
         src_lat, src_lon, src_depth = \
@@ -1465,7 +1472,7 @@ class FiniteSource(object):
             sliprate_f *= np.exp(- 1j * rfftfreq(nfft) *
                                  2. * np.pi * ps.time_shift / dt)
             finite_sliprate += np.fft.irfft(sliprate_f)[:nsamp] \
-                * ps.M0 / finite_m0
+                               * ps.M0 / finite_m0
 
         longitude = np.rad2deg(np.arctan2(y, x))
         colatitude = np.rad2deg(
@@ -1584,7 +1591,351 @@ class FiniteSource(object):
         return return_str
 
 
-class HybridSource(object):
+class HybridSources(object):
+    """
+    A class to handle hybrid sources (force and moment tensor point
+    sources). The sources are defined from the fields extracted
+    from the local hybrid solver.
+
+    :param fieldsfile: Path to hdf5 or netcdf file containing displacement and 
+        strain (in spherical coordinates tpr) from the local hybrid solver.
+        group 'spherical' must include datasets:
+        ['spherical/displacement'] and 
+        ['spherical/traction'] OR ['spherical/strain']
+        and attribute 'nb_points' with the total number of gll points.
+    :type fieldsfile: string
+    :param coordsfile: Path to hdf5 or netcdf file containing the 
+        coordinates, normals, integration weights and elastic parameters mu, 
+        lambda, xi, phi and eta. Point coordinates and normals must be in 
+        spherical coordinates (tpr)
+        group 'spherical' must include datasets:
+        'spherical/normals'], ['spherical/weights'], ['spherical/coordinates']
+        and attribute 'nb_points' with the total number of gll points.
+        group 'elastic_params' must include datasets:
+        ['elastic_params/mu'], ['elastic_params/lambda'], 
+        ['elastic_params/xi'], ['elastic_params/phi'], ['elastic_params/eta']
+    :type coordsfile: string
+    :param filter_freqs: A tuple (freqmin, freqmax) specifying the 
+        minimum (highpass) and maximum (lowpass) frequencies for bandpass 
+        filtering of the source time functions of the HybridSource. Recall
+        that the source time functions come from the local simulation and
+        need to be bandpass filtered for re-propagation with the reciprocal
+        instaseis database. 
+    :type filter_freqs: tuple, optional
+
+        >>> import instaseis
+        >>> instaseis.HybridSources(
+        ...     fieldsfile="path/to/local_output.hdf5",
+        ...     coordsfile="path/to/tpr_coordinates.hdf5",
+        ...     filter_freqs=(0.01, 0.125))
+    """
+
+    def __init__(self, fieldsfile, coordsfile, bg_field_file=None,
+                 filter_freqs=None, npoints_rank=None, start_idx=None):
+        self.pointsources = self._create_pointsources(
+            fieldsfile, coordsfile, bg_field_file,
+            filter_freqs, npoints_rank, start_idx)
+
+    def __len__(self):
+        return len(self.pointsources)
+
+    def __getitem__(self, index):
+        return self.pointsources[index]
+
+    def _create_pointsources(self, fieldsfile, coordsfile, bg_field_file=None,
+                             filter_freqs=None, npoints_rank=None,
+                             start_idx=None):
+        """generate point sources from local simulation fields"""
+
+        f_fields = h5py.File(fieldsfile, "r")
+        f_coords = h5py.File(coordsfile, "r")
+
+        if bg_field_file:
+            f_bg_field = h5py.File(bg_field_file, "r")
+        # review bg_field_file needs the same group name too!
+        if "spherical" in f_fields and "spherical" in f_coords:
+            grp_fields = f_fields['spherical']
+            grp_coords = f_coords['spherical']
+            if bg_field_file:
+                grp_bg_field = f_bg_field['spherical']
+        elif "local" in f_fields and "local" in f_coords:
+            grp_fields = f_fields['local']
+            grp_coords = f_coords['local']
+            rotmat = grp_coords.attrs['rotmat_xyz_loc_to_glob']
+            radius_of_box_top = grp_coords.attrs['radius_of_box_top'][0]
+            if bg_field_file:
+                grp_bg_field = f_bg_field['local']
+        else:
+            raise NotImplementedError("Only spherical or local groups "
+                                      "allowed. Both files must have the same "
+                                      "groups, i.e. be in the same "
+                                      "coordinates.")
+        if npoints_rank is None:
+            npoints = grp_coords.attrs['nb_points']
+        else:
+            npoints = npoints_rank
+
+        tpr = grp_coords['coordinates'][int(start_idx):int(
+            start_idx) + int(npoints), :]
+        normals = grp_coords['normals']
+        weights = grp_coords['gll_weights']
+        dt = grp_fields.attrs['dt']
+        if "local" in f_coords:
+            tpr[:, 2] += radius_of_box_top  # radius of the Earth
+            tpr = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
+                tpr, rotmat)
+
+        mu_all = f_coords['Instaseis_medium_params/mu']
+        lbd_all = f_coords['Instaseis_medium_params/lambda']
+        xi_all = f_coords['Instaseis_medium_params/xi']
+        phi_all = f_coords['Instaseis_medium_params/phi']
+        eta_all = f_coords['Instaseis_medium_params/eta']
+
+        # When extracting from hdf5, dt is a float. When extracting from
+        # netcdf, dt is a numpy array of length 1.
+        if type(dt) is np.ndarray:
+            dt = dt[0]
+
+        displ_all = grp_fields['displacement']
+        traction_all = None
+        strain_all = None
+        if bg_field_file:
+            velocity_bg_all = grp_bg_field['velocity']
+            stress_bg_all = grp_bg_field['stress']
+
+        if 'traction' in grp_fields:
+            traction_all = grp_fields['traction']
+        elif 'strain' in grp_fields:
+            strain_all = grp_fields['strain']
+        else:
+            ValueError("Need strains or tractions to repropagate field via "
+                       "hybrid sources.")
+        pointsources = []
+        for j in np.arange(npoints):
+            i = j + int(start_idx)
+            n = np.array(normals[i, :], dtype=np.float64)
+            w = weights[i]
+            latitude = 90.0 - tpr[j, 0]
+            longitude = tpr[j, 1]
+            depth_in_m = 6371000.0 - tpr[j, 2]
+            if -1.0 <= depth_in_m <= 0.0:
+                depth_in_m = 0.0
+
+            if bg_field_file:
+                velocity_bg = velocity_bg_all[i, :, :]
+                displ_bg = cumtrapz(velocity_bg, dx=dt, initial=0.0)
+                displ = displ_all[i, :, :] - displ_bg
+            else:
+                displ = displ_all[i, :, :]
+
+            if "local" in f_fields:
+                n = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    n, rotmat, tpr[j, 1], tpr[j, 0])
+                displ = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    displ, rotmat, tpr[j, 1], tpr[j, 0])
+
+            mu = mu_all[i]
+            lbd = lbd_all[i]
+            xi = xi_all[i]
+            phi = phi_all[i]
+            eta = eta_all[i]
+            # review only transverse isotropy in this case?
+            fa_ani_thetal = 0.0
+            fa_ani_phil = 0.0
+
+            c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 0, 0)
+            c_12 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 1, 1)
+            c_13 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 2)
+            c_15 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 0, 2, 0)
+            c_22 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 1, 1)
+            c_23 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 2)
+            c_25 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 1, 2, 0)
+            c_33 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 2)
+            c_35 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 2, 2, 0)
+            c_44 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 1, 2)
+            c_46 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 1, 2, 0, 1)
+            c_55 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 2, 0, 2, 0)
+            c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
+                              fa_ani_phil, 0, 1, 0, 1)
+
+            # Note that all STFs need to be bandlimited for reconvolution to be
+            # stable later.
+
+            # append moment tensor sources
+            # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
+            d0 = -np.array(displ[:, 0])  # theta
+            d1 = -np.array(displ[:, 1])  # phi
+            d2 = -np.array(displ[:, 2])  # r
+
+            if filter_freqs is not None:
+                d0 = bandpass(d0, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)  # review zerophase?
+                d1 = bandpass(d1, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)
+                d2 = bandpass(d2, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)
+
+            # taper
+            tlen = max(int(ceil(0.08 * len(d0))), 5)
+            taper = np.ones_like(d0)
+            taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
+            d0 = taper * d0
+            d1 = taper * d1
+            d2 = taper * d2
+
+            m_tt = (c_11 * n[0] + c_15 * n[2]) * w
+            m_pp = (c_12 * n[0] + c_25 * n[2]) * w
+            m_rr = (c_13 * n[0] + c_35 * n[2]) * w
+            m_rp = c_46 * n[1] * w  # = 0 for isotropy
+            m_rt = (c_55 * n[2] + c_15 * n[0]) * w
+            m_tp = c_66 * n[1] * w
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=d0, dt=dt))
+            m_tt = c_12 * n[1] * w
+            m_pp = c_22 * n[1] * w
+            m_rr = c_23 * n[1] * w
+            m_rp = (c_44 * n[2] + c_46 * n[0]) * w
+            m_rt = c_25 * n[1] * w  # = 0 for isotropy
+            m_tp = (c_66 * n[0] + c_46 * n[2]) * w
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=d1, dt=dt))
+            m_tt = (c_13 * n[2] + c_15 * n[0]) * w
+            m_pp = (c_23 * n[2] + c_25 * n[0]) * w
+            m_rr = (c_33 * n[2] + c_35 * n[0]) * w
+            m_rp = c_44 * n[1] * w
+            m_rt = (c_55 * n[0] + c_35 * n[2]) * w
+            m_tp = c_46 * n[1] * w  # = 0 for isotropy
+            pointsources.append(Source(latitude, longitude,
+                                       depth_in_m=depth_in_m,
+                                       m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                       m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                       sliprate=d2, dt=dt))
+
+            # append force sources
+            # define f orces f_r, f_t, f_p from strain
+            # recall voigt in tpr: Ett Epp Err Erp Ert Etp
+            if traction_all is not None:
+                traction = traction_all[i, :, :]
+                if "local" in f_fields:
+                    traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                        traction, rotmat, tpr[j, 1], tpr[j, 0])
+                t0 = np.array(traction[:, 0])  # theta
+                t1 = np.array(traction[:, 1])  # phi
+                t2 = np.array(traction[:, 2])  # r
+
+            else:
+                strain = strain_all[i, :, :]
+                # 123 = tpr or 123 = xyz
+                e_11 = np.array(strain[:, 0], dtype=np.float64)
+                e_22 = np.array(strain[:, 1], dtype=np.float64)
+                e_33 = np.array(strain[:, 2], dtype=np.float64)
+                e_32 = np.array(strain[:, 3], dtype=np.float64)
+                e_31 = np.array(strain[:, 4], dtype=np.float64)
+                e_12 = np.array(strain[:, 5], dtype=np.float64)
+
+                if bg_field_file:
+                    stress_bg = stress_bg_all[i, :, :]
+                    sigma_11 = np.array(stress_bg[:, 0], dtype=np.float64)
+                    sigma_22 = np.array(stress_bg[:, 1], dtype=np.float64)
+                    sigma_33 = np.array(stress_bg[:, 2], dtype=np.float64)
+                    sigma_32 = np.array(stress_bg[:, 3], dtype=np.float64)
+                    sigma_31 = np.array(stress_bg[:, 4], dtype=np.float64)
+                    sigma_12 = np.array(stress_bg[:, 5], dtype=np.float64)
+                else:
+                    sigma_11 = 0.0
+                    sigma_22 = 0.0
+                    sigma_33 = 0.0
+                    sigma_32 = 0.0
+                    sigma_31 = 0.0
+                    sigma_12 = 0.0
+
+                # if 123 = xyz, then get the normal into xyz, calculate
+                # traction in xyz and then rotate it to tpr
+                if "local" in f_fields:
+                    n = np.array(normals[i, :], dtype=np.float64)
+
+                t0 = n[0] * ((c_11 * e_11 + 2.0 * c_15 * e_31 + c_12 * e_22 +
+                              c_13 * e_33) - sigma_11) + \
+                     n[1] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                     n[2] * ((c_15 * e_11 + c_25 * e_22 + c_35 * e_33 + 2.0 *
+                              c_55 * e_31) - sigma_31)
+
+                t1 = n[0] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                     n[1] * ((c_12 * e_11 + 2.0 * c_25 * e_31 + c_22 * e_22 +
+                              c_23 * e_33) - sigma_22) + \
+                     n[2] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32)
+
+                t2 = n[0] * ((c_15 * e_11 + 2.0 * c_55 * e_31 + c_25 * e_22 +
+                              c_35 * e_33) - sigma_31) + \
+                     n[1] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32) + \
+                     n[2] * ((c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
+                              c_33 * e_33) - sigma_33)
+
+                if "local" in f_fields:
+                    traction = np.array([t0, t1, t2]).T
+                    traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                        traction, rotmat, tpr[j, 1], tpr[j, 0])
+                    t0 = np.array(traction[:, 0])  # theta
+                    t1 = np.array(traction[:, 1])  # phi
+                    t2 = np.array(traction[:, 2])  # r
+
+            if filter_freqs is not None:
+                t0 = bandpass(t0, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)
+                t1 = bandpass(t1, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)
+                t2 = bandpass(t2, freqmin=filter_freqs[0],
+                              freqmax=filter_freqs[1], df=1. / dt,
+                              corners=4, zerophase=True)
+
+            # taper
+            tlen = max(int(ceil(0.08 * len(t0))), 5)
+            taper = np.ones_like(t0)
+            taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
+            t0 = taper * t0
+            t1 = taper * t1
+            t2 = taper * t2
+
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=0, f_t=w, f_p=0,
+                                            sliprate=t0, dt=dt))
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=0, f_t=0, f_p=w,
+                                            sliprate=t1, dt=dt))
+            pointsources.append(ForceSource(latitude, longitude,
+                                            depth_in_m=depth_in_m,
+                                            f_r=w, f_t=0, f_p=0,
+                                            sliprate=t2, dt=dt))
+
+        return pointsources
+
+
+class HybridSourceSingle(object):
     """
     A class to handle a single hybrid source for one point in space (force and
     moment tensor point sources). The sources are defined from the fields
@@ -1615,13 +1966,24 @@ class HybridSource(object):
         need to be bandpass filtered for re-propagation with the reciprocal
         instaseis database.
     :type filter_freqs: tuple, optional
+
+        >>> import instaseis
+        >>> instaseis.HybridSources(
+        ...     fieldsfile="path/to/local_output.hdf5",
+        ...     coordsfile="path/to/tpr_coordinates.hdf5",
+        ...     filter_freqs=(0.01, 0.125))
     """
 
-    def __init__(self, tpr, normal, weight, displacement, strain,
-                 elastic_params, dt, bg_fields=None, rotmat=None):
+    def __init__(self, tpr, normal, w, displacement, elastic_params, dt,
+                 velocity_bg=None, stress_bg=None, strain=None,
+                 traction=None, local_fields=False, rotmat=None):
         self.pointsources = \
-            self._create_pointsources(tpr, normal, weight, displacement, strain,
-                                      elastic_params, dt, bg_fields=bg_fields,
+            self._create_pointsources(tpr, normal, w, displacement,
+                                      elastic_params, dt,
+                                      velocity_bg=velocity_bg,
+                                      stress_bg=stress_bg, strain=strain,
+                                      traction=traction,
+                                      local_fields=local_fields,
                                       rotmat=rotmat)
 
     def __len__(self):
@@ -1630,10 +1992,21 @@ class HybridSource(object):
     def __getitem__(self, index):
         return self.pointsources[index]
 
-    def _create_pointsources(self, tpr, normal, weight, displacement,
-                             strain, elastic_params, dt, bg_fields=None,
-                             rotmat=None):
+    def _create_pointsources(self, tpr, normal, w, displacement,
+                             elastic_params, dt,
+                             velocity_bg=None, stress_bg=None, strain=None,
+                             traction=None,
+                             local_fields=False, rotmat=None):
         """generate point sources from local simulation fields"""
+
+        if strain is None and traction is None:
+            raise ValueError("either strain or traction needs to be defined "
+                             "from the local simulation")
+
+        if (velocity_bg is None and stress_bg is not None) or \
+                (velocity_bg is not None and stress_bg is None):
+            raise ValueError("both velocity and stress bg fields need to be "
+                             "defined")
 
         latitude = 90.0 - tpr[0]
         longitude = tpr[1]
@@ -1641,184 +2014,36 @@ class HybridSource(object):
         if -1.0 <= depth_in_m <= 0.0:
             depth_in_m = 0.0
 
-        c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, c_46, \
-        c_55, c_66 = self._get_cijkl(elastic_params)
+        mu = elastic_params["mu"]
+        lbd = elastic_params["lambda"]
+        xi = elastic_params["xi"]
+        phi = elastic_params["phi"]
+        eta = elastic_params["eta"]
+        # review only transverse isotropy in this case?
+        fa_ani_thetal = elastic_params["fa_ani_thetal"]
+        fa_ani_phil = elastic_params["fa_ani_phil"]
 
-        w = weight
-        pointsources = []
+        if velocity_bg is not None:
+            # f_disp = './DISPL/displ_%f_%f_%f.txt' %(tpr[0], tpr[1], tpr[2])
+            # f_disp_spec = './DISPL_SPEC/displ_%f_%f_%f.txt' %(tpr[0],
+            # tpr[1], tpr[2])
+            # f_disp_bg = './DISPL_BG/displ_%f_%f_%f.txt' %(tpr[0], tpr[1],
+            # tpr[2])
+            displ_bg = velocity_bg  # cumtrapz(velocity_bg, dx=dt, initial=0.0)
+            # np.savetxt(f_disp_bg, np.array(displ_bg))
+            # np.savetxt(f_disp_spec, np.array(displacement))
+            displacement = displacement - displ_bg
+            # np.savetxt(f_disp, np.array(displacement))
 
-        # if rotmat is specified, it means we have displacement and strain in
-        # local xyz and need to rotate it; bg_fields are always in tpr
-
-        if rotmat is not None:
-            n_xyz = normal
-            n_tpr = rotations.hybrid_vector_local_cartesian_to_tpr(
+        if local_fields:
+            n = rotations.hybrid_vector_local_cartesian_to_tpr(
                 normal, rotmat, tpr[1], tpr[0])
             displacement = rotations.hybrid_vector_local_cartesian_to_tpr(
                 displacement, rotmat, tpr[1], tpr[0])
         else:
-            n_xyz = None
-            n_tpr = normal
+            n = normal
 
-        if bg_fields is not None:
-            # both are in tpr
-            displacement = displacement - bg_fields['displacement']
-
-        # Note that all STFs need to be bandlimited for reconvolution to be
-        # stable later.
-        # append moment tensor sources: define from displacement
-        # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-        d0 = -np.array(displacement[:, 0])  # theta
-        d1 = -np.array(displacement[:, 1])  # phi
-        d2 = -np.array(displacement[:, 2])  # r
-
-        # taper
-        tlen = max(int(ceil(0.08 * len(d0))), 5)
-        taper = np.ones_like(d0)
-        taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
-        d0 = taper * d0
-        d1 = taper * d1
-        d2 = taper * d2
-
-        m_tt = (c_11 * n_tpr[0] + c_15 * n_tpr[2]) * w
-        m_pp = (c_12 * n_tpr[0] + c_25 * n_tpr[2]) * w
-        m_rr = (c_13 * n_tpr[0] + c_35 * n_tpr[2]) * w
-        m_rp = c_46 * n_tpr[1] * w  # = 0 for isotropy
-        m_rt = (c_55 * n_tpr[2] + c_15 * n_tpr[0]) * w
-        m_tp = c_66 * n_tpr[1] * w
-        pointsources.append(Source(latitude, longitude,
-                                   depth_in_m=depth_in_m,
-                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                   sliprate=d0, dt=dt))
-        m_tt = c_12 * n_tpr[1] * w
-        m_pp = c_22 * n_tpr[1] * w
-        m_rr = c_23 * n_tpr[1] * w
-        m_rp = (c_44 * n_tpr[2] + c_46 * n_tpr[0]) * w
-        m_rt = c_25 * n_tpr[1] * w  # = 0 for isotropy
-        m_tp = (c_66 * n_tpr[0] + c_46 * n_tpr[2]) * w
-        pointsources.append(Source(latitude, longitude,
-                                   depth_in_m=depth_in_m,
-                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                   sliprate=d1, dt=dt))
-        m_tt = (c_13 * n_tpr[2] + c_15 * n_tpr[0]) * w
-        m_pp = (c_23 * n_tpr[2] + c_25 * n_tpr[0]) * w
-        m_rr = (c_33 * n_tpr[2] + c_35 * n_tpr[0]) * w
-        m_rp = c_44 * n_tpr[1] * w
-        m_rt = (c_55 * n_tpr[0] + c_35 * n_tpr[2]) * w
-        m_tp = c_46 * n_tpr[1] * w  # = 0 for isotropy
-        pointsources.append(Source(latitude, longitude,
-                                   depth_in_m=depth_in_m,
-                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
-                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
-                                   sliprate=d2, dt=dt))
-
-        # append force sources: define forces f_r, f_t, f_p from strain
-        # recall voigt in tpr: Ett Epp Err Erp Ert Etp
-        # 123 = tpr or 123 = xyz
-        e_11 = np.array(strain[:, 0], dtype=np.float64)
-        e_22 = np.array(strain[:, 1], dtype=np.float64)
-        e_33 = np.array(strain[:, 2], dtype=np.float64)
-        e_32 = np.array(strain[:, 3], dtype=np.float64)
-        e_31 = np.array(strain[:, 4], dtype=np.float64)
-        e_12 = np.array(strain[:, 5], dtype=np.float64)
-
-        # if 123 = xyz, then get the normal into xyz, calculate
-        # traction in xyz and then rotate it to tpr
-        if rotmat is not None:
-            n = n_xyz
-        else:
-            n = n_tpr
-
-        t0 = n[0] * (c_11 * e_11 + 2.0 * c_15 * e_31 + c_12 * e_22 +
-                      c_13 * e_33) + \
-             n[1] * 2.0 * (c_66 * e_12 + c_46 * e_32) + \
-             n[2] * (c_15 * e_11 + c_25 * e_22 + c_35 * e_33 + 2.0 *
-                      c_55 * e_31)
-
-        t1 = n[0] * 2.0 * (c_66 * e_12 + c_46 * e_32) + \
-             n[1] * (c_12 * e_11 + 2.0 * c_25 * e_31 + c_22 * e_22 +
-                      c_23 * e_33) + \
-             n[2] * 2.0 * (c_46 * e_12 + c_44 * e_32)
-
-        t2 = n[0] * (c_15 * e_11 + 2.0 * c_55 * e_31 + c_25 * e_22 +
-                      c_35 * e_33) + \
-             n[1] * 2.0 * (c_46 * e_12 + c_44 * e_32) + \
-             n[2] * (c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
-                      c_33 * e_33)
-
-        if rotmat is not None:
-            traction = np.array([t0, t1, t2]).T
-            traction = rotations.hybrid_vector_local_cartesian_to_tpr(
-                traction, rotmat, tpr[1], tpr[0])
-            t0 = np.array(traction[:, 0])  # theta
-            t1 = np.array(traction[:, 1])  # phi
-            t2 = np.array(traction[:, 2])  # r
-
-        if bg_fields is not None:
-            # ToDo it will be faster to have the bg field as traction!!
-            bg_e_11 = np.array(bg_fields['strain'][:, 0], dtype=np.float64)
-            bg_e_22 = np.array(bg_fields['strain'][:, 1], dtype=np.float64)
-            bg_e_33 = np.array(bg_fields['strain'][:, 2], dtype=np.float64)
-            bg_e_32 = np.array(bg_fields['strain'][:, 3], dtype=np.float64)
-            bg_e_31 = np.array(bg_fields['strain'][:, 4], dtype=np.float64)
-            bg_e_12 = np.array(bg_fields['strain'][:, 5], dtype=np.float64)
-
-            bg_t0 = n_tpr[0] * (c_11 * bg_e_11 + 2.0 * c_15 * bg_e_31 + c_12 *
-                                bg_e_22 + c_13 * bg_e_33) + \
-                    n_tpr[1] * 2.0 * (c_66 * bg_e_12 + c_46 * bg_e_32) + \
-                    n_tpr[2] * (c_15 * bg_e_11 + c_25 * bg_e_22 + c_35 *
-                                bg_e_33 + 2.0 * c_55 * bg_e_31)
-
-            bg_t1 = n_tpr[0] * 2.0 * (c_66 * bg_e_12 + c_46 * bg_e_32) + \
-                    n_tpr[1] * (c_12 * bg_e_11 + 2.0 * c_25 * bg_e_31 +
-                                c_22 * bg_e_22 + c_23 * bg_e_33) + \
-                    n_tpr[2] * 2.0 * (c_46 * bg_e_12 + c_44 * bg_e_32)
-
-            bg_t2 = n_tpr[0] * (c_15 * bg_e_11 + 2.0 * c_55 * bg_e_31 +
-                                c_25 * bg_e_22 + c_35 * bg_e_33) + \
-                    n_tpr[1] * 2.0 * (c_46 * bg_e_12 + c_44 * bg_e_32) + \
-                    n_tpr[2] * (c_13 * bg_e_11 + 2.0 * c_35 * bg_e_31
-                                + c_23 * bg_e_22 + c_33 * bg_e_33)
-
-            # both tractions are in tpr
-            t0 = t0 - bg_t0
-            t1 = t1 - bg_t1
-            t2 = t2 - bg_t2
-
-        # taper
-        tlen = max(int(ceil(0.08 * len(t0))), 5)
-        taper = np.ones_like(t0)
-        taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
-        t0 = taper * t0
-        t1 = taper * t1
-        t2 = taper * t2
-
-        pointsources.append(ForceSource(latitude, longitude,
-                                        depth_in_m=depth_in_m,
-                                        f_r=0, f_t=w, f_p=0,
-                                        sliprate=t0, dt=dt))
-        pointsources.append(ForceSource(latitude, longitude,
-                                        depth_in_m=depth_in_m,
-                                        f_r=0, f_t=0, f_p=w,
-                                        sliprate=t1, dt=dt))
-        pointsources.append(ForceSource(latitude, longitude,
-                                        depth_in_m=depth_in_m,
-                                        f_r=w, f_t=0, f_p=0,
-                                        sliprate=t2, dt=dt))
-
-        return pointsources
-
-    def _get_cijkl(self, elastic_params):
-        mu = elastic_params[0]
-        lbd = elastic_params[1]
-        xi = elastic_params[2]
-        phi = elastic_params[3]
-        eta = elastic_params[4]
-        # review only transverse isotropy in this case?
-        fa_ani_thetal = 0.0
-        fa_ani_phil = 0.0
+        pointsources = []
 
         c_11 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                           fa_ani_phil, 0, 0, 0, 0)
@@ -1847,5 +2072,146 @@ class HybridSource(object):
         c_66 = c_ijkl_ani(lbd, mu, xi, phi, eta, fa_ani_thetal,
                           fa_ani_phil, 0, 1, 0, 1)
 
-        return c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, \
-               c_46,  c_55, c_66
+        # Note that all STFs need to be bandlimited for reconvolution to be
+        # stable later.
+
+        # append moment tensor sources
+        # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
+        d0 = -np.array(displacement[:, 0])  # theta
+        d1 = -np.array(displacement[:, 1])  # phi
+        d2 = -np.array(displacement[:, 2])  # r
+
+        # taper
+        tlen = max(int(ceil(0.08 * len(d0))), 5)
+        taper = np.ones_like(d0)
+        taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
+        d0 = taper * d0
+        d1 = taper * d1
+        d2 = taper * d2
+
+        m_tt = (c_11 * n[0] + c_15 * n[2]) * w
+        m_pp = (c_12 * n[0] + c_25 * n[2]) * w
+        m_rr = (c_13 * n[0] + c_35 * n[2]) * w
+        m_rp = c_46 * n[1] * w  # = 0 for isotropy
+        m_rt = (c_55 * n[2] + c_15 * n[0]) * w
+        m_tp = c_66 * n[1] * w
+        pointsources.append(Source(latitude, longitude,
+                                   depth_in_m=depth_in_m,
+                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                   sliprate=d0, dt=dt))
+        m_tt = c_12 * n[1] * w
+        m_pp = c_22 * n[1] * w
+        m_rr = c_23 * n[1] * w
+        m_rp = (c_44 * n[2] + c_46 * n[0]) * w
+        m_rt = c_25 * n[1] * w  # = 0 for isotropy
+        m_tp = (c_66 * n[0] + c_46 * n[2]) * w
+        pointsources.append(Source(latitude, longitude,
+                                   depth_in_m=depth_in_m,
+                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                   sliprate=d1, dt=dt))
+        m_tt = (c_13 * n[2] + c_15 * n[0]) * w
+        m_pp = (c_23 * n[2] + c_25 * n[0]) * w
+        m_rr = (c_33 * n[2] + c_35 * n[0]) * w
+        m_rp = c_44 * n[1] * w
+        m_rt = (c_55 * n[0] + c_35 * n[2]) * w
+        m_tp = c_46 * n[1] * w  # = 0 for isotropy
+        pointsources.append(Source(latitude, longitude,
+                                   depth_in_m=depth_in_m,
+                                   m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
+                                   m_rt=m_rt, m_rp=m_rp, m_tp=m_tp,
+                                   sliprate=d2, dt=dt))
+
+        # append force sources
+        # define f orces f_r, f_t, f_p from strain
+        # recall voigt in tpr: Ett Epp Err Erp Ert Etp
+        if traction is not None:
+            if local_fields:
+                traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    traction, rotmat, tpr[1], tpr[0])
+            t0 = np.array(traction[:, 0])  # theta
+            t1 = np.array(traction[:, 1])  # phi
+            t2 = np.array(traction[:, 2])  # r
+
+        else:
+            # 123 = tpr or 123 = xyz
+            e_11 = np.array(strain[:, 0], dtype=np.float64)
+            e_22 = np.array(strain[:, 1], dtype=np.float64)
+            e_33 = np.array(strain[:, 2], dtype=np.float64)
+            e_32 = np.array(strain[:, 3], dtype=np.float64)
+            e_31 = np.array(strain[:, 4], dtype=np.float64)
+            e_12 = np.array(strain[:, 5], dtype=np.float64)
+
+            if stress_bg is not None:
+                # f_trac = './TRAC/trac_%f_%f_%f.txt' %(tpr[0], tpr[1], tpr[2])
+                f_trac_bg = './TRAC_BG/trac_%f_%f_%f.txt' % (
+                tpr[0], tpr[1], tpr[2])
+                f_trac_spec = './TRAC_SPEC/trac_%f_%f_%f.txt' % (
+                tpr[0], tpr[1], tpr[2])
+                sigma_11 = np.array(stress_bg[:, 0], dtype=np.float64)
+                sigma_22 = np.array(stress_bg[:, 1], dtype=np.float64)
+                sigma_33 = np.array(stress_bg[:, 2], dtype=np.float64)
+                sigma_32 = np.array(stress_bg[:, 3], dtype=np.float64)
+                sigma_31 = np.array(stress_bg[:, 4], dtype=np.float64)
+                sigma_12 = np.array(stress_bg[:, 5], dtype=np.float64)
+            else:
+                sigma_11 = 0.0
+                sigma_22 = 0.0
+                sigma_33 = 0.0
+                sigma_32 = 0.0
+                sigma_31 = 0.0
+                sigma_12 = 0.0
+
+            # if 123 = xyz, then get the normal into xyz, calculate
+            # traction in xyz and then rotate it to tpr
+            if local_fields:
+                n = np.array(normal, dtype=np.float64)
+
+            t0 = n[0] * ((c_11 * e_11 + 2.0 * c_15 * e_31 + c_12 * e_22 +
+                          c_13 * e_33) - sigma_11) + \
+                 n[1] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                 n[2] * ((c_15 * e_11 + c_25 * e_22 + c_35 * e_33 + 2.0 *
+                          c_55 * e_31) - sigma_31)
+
+            t1 = n[0] * 2.0 * ((c_66 * e_12 + c_46 * e_32) - sigma_12) + \
+                 n[1] * ((c_12 * e_11 + 2.0 * c_25 * e_31 + c_22 * e_22 +
+                          c_23 * e_33) - sigma_22) + \
+                 n[2] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32)
+
+            t2 = n[0] * ((c_15 * e_11 + 2.0 * c_55 * e_31 + c_25 * e_22 +
+                          c_35 * e_33) - sigma_31) + \
+                 n[1] * 2.0 * ((c_46 * e_12 + c_44 * e_32) - sigma_32) + \
+                 n[2] * ((c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
+                          c_33 * e_33) - sigma_33)
+            # np.savetxt(f_trac, np.array([t0, t1, t2]).T)
+            if local_fields:
+                traction = np.array([t0, t1, t2]).T
+                traction = rotations.hybrid_vector_local_cartesian_to_tpr(
+                    traction, rotmat, tpr[1], tpr[0])
+                t0 = np.array(traction[:, 0])  # theta
+                t1 = np.array(traction[:, 1])  # phi
+                t2 = np.array(traction[:, 2])  # r
+
+        # taper
+        tlen = max(int(ceil(0.08 * len(t0))), 5)
+        taper = np.ones_like(t0)
+        taper[-tlen:] = signal.hann(tlen * 2)[tlen:]
+        t0 = taper * t0
+        t1 = taper * t1
+        t2 = taper * t2
+
+        pointsources.append(ForceSource(latitude, longitude,
+                                        depth_in_m=depth_in_m,
+                                        f_r=0, f_t=w, f_p=0,
+                                        sliprate=t0, dt=dt))
+        pointsources.append(ForceSource(latitude, longitude,
+                                        depth_in_m=depth_in_m,
+                                        f_r=0, f_t=0, f_p=w,
+                                        sliprate=t1, dt=dt))
+        pointsources.append(ForceSource(latitude, longitude,
+                                        depth_in_m=depth_in_m,
+                                        f_r=w, f_t=0, f_p=0,
+                                        sliprate=t2, dt=dt))
+
+        return pointsources

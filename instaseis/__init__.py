@@ -100,9 +100,7 @@ if __version__.startswith("0.0.0-tar/zipball"):  # pragma: no cover
                   "release or install from git.", UserWarning)
 
 # NoQa
-from .source import Source, Receiver, ForceSource, FiniteSource, HybridSources
-from .hybrid import hybrid_extraction #, hybrid_prepare_inputs, \
-    #hybrid_get_elastic_params
-from .hybrid_parallel import hybrid_extraction_parallel, hybrid_get_seismograms_parallel, \
-    hybrid_get_elastic_params_parallel
+from .source import Source, Receiver, ForceSource, FiniteSource
+from .hybrid import hybrid_extraction, hybrid_repropagation, \
+    hybrid_get_elastic_params
 from .rotations import *

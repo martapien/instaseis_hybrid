@@ -16,6 +16,11 @@ import math
 import os
 import sys
 
+#try:
+#    import click
+#    click_installed = True
+#except ImportError:
+#    click_installed = False
 import click
 import netCDF4
 import numpy as np
