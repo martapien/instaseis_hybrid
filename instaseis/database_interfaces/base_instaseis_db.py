@@ -1030,8 +1030,10 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     # resolution.
                     # stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
 
-                    stf_conv_f = np.fft.rfft(source.sliprate,
-                                             n=new_nfft)
+                    # review why taking this out of the comp loop gives wrong
+                    #  results?
+                    stf_conv_f = np.fft.rfft(source.sliprate, n=new_nfft)
+
                     data_new = lanczos_interpolation(
                         data=data[comp], old_start=0, old_dt=self.info.dt,
                         new_start=0, new_dt=new_dt, new_npts=new_npts, a=12,
@@ -1060,6 +1062,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                         data_summed[comp] = data[comp]
 
         if dt is not None and abs(dt - new_dt) > 1e-7:
+            # ToDo check this here... doesn't make sense, as you should just
+            # sum it all together at the end from all processors and do this?
             if dt > new_dt:
                 raise ValueError("We can only upsample the result.")
             for comp in components:
