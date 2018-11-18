@@ -28,14 +28,12 @@ from obspy.signal.filter import bandpass
 from obspy.signal.util import next_pow_2
 from scipy.integrate import cumtrapz
 import scipy.signal
+from scipy import interp
 
 from ..source import Source, ForceSource, Receiver, \
     HybridSource, FiniteSource
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq
-from ..rotations import hybrid_vector_local_cartesian_to_tpr, \
-    hybrid_coord_transform_local_cartesian_to_tpr
 
-import h5py
 
 DEFAULT_MU = 32e9
 
@@ -355,7 +353,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
     def get_seismograms_stf(self, source, receiver, components=None,
                         kind='displacement', remove_source_shift=False,
                         reconvolve_stf=True, return_obspy_stream=True,
-                        dt=None, kernelwidth=12):
+                        dt=None, kernelwidth=12, interpolation='lanczos'):
         """
         Extract seismograms from the Green's function database.
 
@@ -424,11 +422,19 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
 
-        stf_deconv = lanczos_interpolation(data=stf_deconv,
-                                           old_start=0, old_dt=self.info.dt,
-                                           new_start=0, new_dt=new_dt,
-                                           new_npts=new_npts, a=12,
-                                           window="blackman")
+        if interpolation == 'lanczos':
+            stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                               old_start=0, old_dt=self.info.dt,
+                                               new_start=0, new_dt=new_dt,
+                                               new_npts=new_npts, a=kernelwidth,
+                                               window="blackman")
+        else:
+            t_new = np.linspace(0, new_npts * new_dt, new_npts, endpoint=False)
+            t_old = np.linspace(0, self.info.dt * self.info.npts,
+                                self.info.npts, endpoint=False)
+            stf_deconv = interp(t_new, t_old, stf_deconv)
+            print("TEST")
+            print("new_npts %f, len stfdeconv %f" % (new_npts, len(stf_deconv)))
 
         # Can never be negative with the current logic.
         n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
@@ -470,7 +476,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 data_new = lanczos_interpolation(data=data[comp],
                                              old_start=0, old_dt=self.info.dt,
                                              new_start=0, new_dt=new_dt,
-                                             new_npts=new_npts, a=12,
+                                             new_npts=new_npts, a=kernelwidth,
                                              window="blackman")
 
                 #if source.time_shift is not None:
