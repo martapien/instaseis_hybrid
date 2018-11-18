@@ -464,7 +464,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 #if abs((source.dt - self.info.dt) / self.info.dt) > 1e-7:
                 #    raise ValueError("dt of the source not compatible")
 
-                stf_conv_f = np.fft.rfft(source.sliprate,
+                stf_conv_f = np.fft.rfft(source.sliprate[:new_npts],
                                          n=new_nfft)
 
                 data_new = lanczos_interpolation(data=data[comp],
@@ -683,6 +683,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 f[_l == 0] = 0 + 0j
 
                 data[comp] = np.fft.irfft(dataf * f)[:new_npts]
+                #data[comp] /= self.parsed_mesh.amplitude
 
         if dt is not None:
             if dt > new_dt:
