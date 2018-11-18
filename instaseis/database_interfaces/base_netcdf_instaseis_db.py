@@ -715,11 +715,6 @@ class BaseNetCDFInstaseisDB(with_metaclass(ABCMeta, BaseInstaseisDB)):
 
         return params
 
-
-
-
-
-
     @abstractmethod
     def _get_params(self, element_info):
         """

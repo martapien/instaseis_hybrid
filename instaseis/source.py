@@ -20,14 +20,11 @@ import numpy as np
 import obspy
 import obspy.core.inventory
 from obspy.signal.filter import lowpass
-from obspy.signal.filter import bandpass
 from obspy.signal.util import next_pow_2
 import obspy.io.xseed.parser
 import os
 from scipy import interp
 from scipy import signal
-from scipy.integrate import cumtrapz
-import h5py
 from math import ceil
 
 from . import ReceiverParseError, SourceParseError
@@ -811,7 +808,10 @@ class Receiver(SourceOrReceiver):
         return_str = 'Instaseis Receiver:\n'
         return_str += '\tLongitude : %6.1f deg\n' % (self.longitude)
         return_str += '\tLatitude  : %6.1f deg\n' % (self.latitude)
-        return_str += '\tDepth  : %f m\n' % (self.depth_in_m)
+        if self.depth_in_m is None:
+            return_str += '\tDepth  : %f m\n' % (0)
+        else:
+            return_str += '\tDepth  : %f m\n' % (self.depth_in_m)
         return_str += '\tNetwork   : %s\n' % (self.network)
         return_str += '\tStation   : %s\n' % (self.station)
         return_str += '\tLocation  : %s\n' % (self.location)

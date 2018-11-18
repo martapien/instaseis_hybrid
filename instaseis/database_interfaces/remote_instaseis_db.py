@@ -170,3 +170,14 @@ class RemoteInstaseisDB(BaseInstaseisDB):
         info["sliprate"] = np.array(info["sliprate"], dtype=np.float64)
 
         return info
+
+    def _get_data_hybrid(self, source, receiver, dt, filter_freqs,
+                         components, coords_rotmat):
+        raise NotImplementedError
+
+    def _get_elastic_params(self, source, receiver):
+        raise NotImplementedError
+
+    def _get_seismograms_multiple(self, source, receiver,
+                                  components=("Z", "N", "E")):
+        raise NotImplementedError
