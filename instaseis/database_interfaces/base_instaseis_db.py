@@ -433,7 +433,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             t_old = np.linspace(0, self.info.dt * self.info.npts,
                                 self.info.npts, endpoint=False)
             stf_deconv = interp(t_new, t_old, stf_deconv)
-            print("TEST")
             print("new_npts %f, len stfdeconv %f" % (new_npts, len(stf_deconv)))
 
         # Can never be negative with the current logic.
@@ -982,8 +981,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             else:
                 bg_fields = None
 
-            print(coords_data['elastic_parameters'].shape)
-
             sources = HybridSource(
                  coords_data["coordinates"][i, :], coords_data["normals"][i, :],
                  coords_data["weights"][i], loc_f_data['displacement'][i, :, :],
@@ -1035,11 +1032,18 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     # We assume here that the sliprate is well-behaved,
                     # e.g. zeros at the boundaries and no energy above the mesh
                     # resolution.
-                    # stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
+
+                    missing_length = (new_npts - 1) * new_dt - \
+                                     (len(source.sliprate) - 1) * source.dt
+                    missing_samples = \
+                        max(int(missing_length / source.dt) + 1, 0)
+
+                    stf_conv = np.concatenate([source.sliprate,
+                                               np.zeros(missing_samples)])
 
                     # review why taking this out of the comp loop gives wrong
                     #  results?
-                    stf_conv_f = np.fft.rfft(source.sliprate, n=new_nfft)
+                    stf_conv_f = np.fft.rfft(stf_conv, n=new_nfft)
 
                     data_new = lanczos_interpolation(
                         data=data[comp], old_start=0, old_dt=self.info.dt,
@@ -1107,8 +1111,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         # Integrate/differentiate here. No need to do it for every single
         # seismogram and stack the errors.
         n_derivative = KIND_MAP[kind]
-
-        print(n_derivative)
 
         if n_derivative:
             for comp in data_summed.keys():
