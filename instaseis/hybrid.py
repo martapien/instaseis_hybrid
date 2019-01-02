@@ -710,7 +710,12 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
             inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
         # radius of the Earth OR radius of box top if at depth
         radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
-        # review [0] index for the above i.e. .attrs['radius_of_box_top'][0] ?
+
+        if type(radius_of_box_top) is np.ndarray:
+            radius_of_box_top = radius_of_box_top[0]
+
+        # coordinates[:, 2] *= -1.
+        # review remove this later when WPP outputs negative
         coordinates[:, 2] += radius_of_box_top
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
             coordinates, coords_file_data["rotmat_xyz_glob_to_loc"])
@@ -776,20 +781,15 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
     else:
         raise NotImplementedError
 
-    fields_file_data['displacement'] = \
-        grp_fields['displacement'][start_idx:end_idx, :, :]
-    fields_file_data['traction'] = None
-    fields_file_data['strain'] = None
+    if 'displacement' in grp_fields:
+        fields_file_data['displacement'] = \
+            grp_fields['displacement'][start_idx:end_idx, :, :]
+    if 'velocity' in grp_fields:  # ToDo remove this
+        fields_file_data['displacement'] = \
+            grp_fields['velocity'][start_idx:end_idx, :, :]
 
-    if 'traction' in grp_fields:
-        fields_file_data['traction'] = \
-            grp_fields['traction'][start_idx:end_idx, :, :]
-    elif 'strain' in grp_fields:
-        fields_file_data['strain'] = \
-            grp_fields['strain'][start_idx:end_idx, :, :]
-    else:
-        ValueError("Need strains or tractions to repropagate field via "
-                   "hybrid sources.")
+    fields_file_data['strain'] = \
+        grp_fields['strain'][start_idx:end_idx, :, :]
 
     dt = grp_fields.attrs['dt']
 
@@ -850,14 +850,19 @@ def _make_sources(coordinates, database):
     sources = []
     items = coordinates.shape[0]
 
-    for i in np.arange(items):
-        lat = 90.0 - coordinates[i, 0]
-        lon = coordinates[i, 1]
-        dep = (6371000.0 - coordinates[i, 2])
-        sources.append(Source(
-            latitude=lat,
-            longitude=lon,
-            depth_in_m=dep))
+    with open('coords_tpr_test.txt', 'w') as f:
+        for i in np.arange(items):
+            lat = 90.0 - coordinates[i, 0]
+            lon = coordinates[i, 1]
+            dep = (6371000.0 - coordinates[i, 2])
+            #if dep < 0.0:
+            # ToDo remove this
+            f.write("point: %f, coord: (%f, %f, %f) \n"
+                    % (i, lat, lon, dep))
+            sources.append(Source(
+                latitude=lat,
+                longitude=lon,
+                depth_in_m=dep))
 
     sources = _database_bounds_checks(sources, database)
 

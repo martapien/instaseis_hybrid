@@ -970,9 +970,12 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         data_summed = {}
 
-        for i in np.arange(len(coords_data["normals"])):
+        dt_stf = loc_f_data['dt']
+        duration = (self.info.npts - 1) * self.info.dt
+        new_npts = int(round(duration / dt_stf, 6)) + 1
+        new_nfft = int(next_pow_2(new_npts) * 2)
 
-            dt_stf = loc_f_data['dt']
+        for i in np.arange(len(coords_data["normals"])):
 
             if bg_f_data is not None:
                 bg_fields = {}
@@ -986,16 +989,13 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                  coords_data["weights"][i], loc_f_data['displacement'][i, :, :],
                  loc_f_data['strain'][i, :, :],
                  coords_data['elastic_parameters'][i, :],
-                 dt_stf, bg_fields=bg_fields, rotmat=rotmat)
+                 dt_stf, new_npts, bg_fields=bg_fields, rotmat=rotmat)
 
             # ToDo the params have to be ready before this to build the
             # sources... - awkward, try to restructure
 
             params, data_all = self._get_seismograms_multiple(
                         sources, receiver, components)
-            duration = (self.info.npts - 1) * self.info.dt
-            new_npts = int(round(duration / sources.pointsources[0].dt, 6)) + 1
-            new_nfft = int(next_pow_2(new_npts) * 2)
 
             if STF_MAP[self.info.stf] not in [1]:
                 raise NotImplementedError(
@@ -1033,17 +1033,9 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     # e.g. zeros at the boundaries and no energy above the mesh
                     # resolution.
 
-                    missing_length = (new_npts - 1) * new_dt - \
-                                     (len(source.sliprate) - 1) * source.dt
-                    missing_samples = \
-                        max(int(missing_length / source.dt) + 1, 0)
-
-                    stf_conv = np.concatenate([source.sliprate,
-                                               np.zeros(missing_samples)])
-
                     # review why taking this out of the comp loop gives wrong
                     #  results?
-                    stf_conv_f = np.fft.rfft(stf_conv, n=new_nfft)
+                    stf_conv_f = np.fft.rfft(source.sliprate, n=new_nfft)
 
                     data_new = lanczos_interpolation(
                         data=data[comp], old_start=0, old_dt=self.info.dt,
