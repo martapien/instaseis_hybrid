@@ -1618,10 +1618,11 @@ class HybridSource(object):
     """
 
     def __init__(self, tpr, normal, weight, displacement, strain,
-                 elastic_params, dt, bg_fields=None, rotmat=None):
+                 elastic_params, dt, duration, bg_fields=None, rotmat=None):
         self.pointsources = \
             self._create_pointsources(tpr, normal, weight, displacement, strain,
-                                      elastic_params, dt, bg_fields=bg_fields,
+                                      elastic_params, dt, duration,
+                                      bg_fields=bg_fields,
                                       rotmat=rotmat)
 
     def __len__(self):
@@ -1631,14 +1632,16 @@ class HybridSource(object):
         return self.pointsources[index]
 
     def _create_pointsources(self, tpr, normal, weight, displacement,
-                             strain, elastic_params, dt, bg_fields=None,
-                             rotmat=None):
+                             strain, elastic_params, dt, duration,
+                             bg_fields=None, rotmat=None):
         """generate point sources from local simulation fields"""
 
         latitude = 90.0 - tpr[0]
         longitude = tpr[1]
         depth_in_m = 6371000.0 - tpr[2]
-        if -1.0 <= depth_in_m <= 0.0:
+        #if -1.0 <= depth_in_m <= 0.0:
+        #    depth_in_m = 0.0
+        if depth_in_m <= 0.0:  # ToDo review that check here!!
             depth_in_m = 0.0
 
         c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, c_46, \
@@ -1660,17 +1663,27 @@ class HybridSource(object):
             n_xyz = None
             n_tpr = normal
 
-        if bg_fields is not None:
-            # both are in tpr
-            displacement = displacement - bg_fields['displacement']
+        new_npts = int(round(duration / dt, 6)) + 1
+        difference = new_npts - len(displacement[:, 0])
+        missing_samples = max(int(difference), 0)
 
         # Note that all STFs need to be bandlimited for reconvolution to be
         # stable later.
         # append moment tensor sources: define from displacement
         # recall voigt in tpr: Mtt Mpp Mrr Mrp Mrt Mtp
-        d0 = -np.array(displacement[:, 0])  # theta
-        d1 = -np.array(displacement[:, 1])  # phi
-        d2 = -np.array(displacement[:, 2])  # r
+
+        d0 = np.concatenate((-np.array(displacement[:, 0]), np.full(
+            missing_samples, -displacement[-1, 0])))  # theta
+        d1 = np.concatenate((-np.array(displacement[:, 1]), np.full(
+            missing_samples, -displacement[-1, 1])))  # phi
+        d2 = np.concatenate((-np.array(displacement[:, 2]), np.full(
+            missing_samples, -displacement[-1, 2])))  # r
+
+        if bg_fields is not None:
+            # both are in tpr
+            d0 = d0 - bg_fields['displacement'][:, 0]
+            d1 = d1 - bg_fields['displacement'][:, 1]
+            d2 = d2 - bg_fields['displacement'][:, 2]
 
         # taper
         tlen = max(int(ceil(0.08 * len(d0))), 5)
@@ -1748,13 +1761,17 @@ class HybridSource(object):
              n[2] * (c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
                      c_33 * e_33)
 
+        traction = np.array([t0, t1, t2]).T
         if rotmat is not None:
-            traction = np.array([t0, t1, t2]).T
             traction = rotations.hybrid_vector_local_cartesian_to_tpr(
                 traction, rotmat, tpr[1], tpr[0])
-            t0 = np.array(traction[:, 0])  # theta
-            t1 = np.array(traction[:, 1])  # phi
-            t2 = np.array(traction[:, 2])  # r
+
+        t0 = np.concatenate((np.array(traction[:, 0]), np.full(
+            missing_samples, traction[-1, 0])))  # theta
+        t1 = np.concatenate((np.array(traction[:, 1]), np.full(
+            missing_samples, traction[-1, 1])))  # phi
+        t2 = np.concatenate((np.array(traction[:, 2]), np.full(
+            missing_samples, traction[-1, 2])))  # r
 
         if bg_fields is not None:
             # ToDo it will be faster to have the bg field as traction!!

@@ -22,7 +22,6 @@ import collections
 import numpy as np
 from obspy.signal.util import next_pow_2
 import os
-import h5py
 
 from .base_instaseis_db import BaseInstaseisDB
 from .. import finite_elem_mapping

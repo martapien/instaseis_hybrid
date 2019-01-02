@@ -18,14 +18,18 @@ import h5py
 import warnings
 from math import floor, ceil
 from obspy import Stream, Trace
+from distutils.version import LooseVersion
+from scipy.integrate import cumtrapz
+from obspy.signal.interpolation import lanczos_interpolation
 
 from . import rotations
 from .source import Source, Receiver
-from .helpers import c_ijkl_ani
+from .helpers import c_ijkl_ani, get_band_code
 from . import open_db
 
 try:
     from mpi4py import MPI
+
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     nprocs = comm.Get_size()
@@ -41,8 +45,27 @@ except:
     nprocs = 1
     parallel_active = False
 
-
 WORK_DIR = os.getcwd()
+
+KIND_MAP = {
+    'displacement': 0,
+    'velocity': 1,
+    'acceleration': 2}
+
+
+def _diff_and_integrate(n_derivative, data, comp, dt_out):
+    for _ in np.arange(n_derivative):
+        # In some numpy version there is an incompatibility here - 1.11
+        # works for both so we branch here.
+        if LooseVersion(np.__version__) >= LooseVersion("1.11.0"):
+            data[comp] = np.gradient(data[comp], dt_out)
+        else:  # pragma: no cover
+            data[comp] = np.gradient(data[comp], [dt_out])
+
+    # Cannot happen currently - maybe with other source time functions?
+    for _ in np.arange(-n_derivative):  # pragma: no cover
+        # adding a zero at the beginning to avoid phase shift
+        data[comp] = cumtrapz(data[comp], dx=dt_out, initial=0.0)
 
 
 def hybrid_extraction(input_path, output_path, fwd_db_path, dt, source,
@@ -173,10 +196,11 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
 
     data = bwd_db.get_seismograms_hybrid(
         receiver, coords_data, local_fields_data, bg_f_data=bg_fields_data,
-        components=components, kind=kind, dt=dt, kernelwidth=kernelwidth)
+        components=components)
 
     f_coords.close()
     f_fields_loc.close()
+
     if f_fields_bg is not None:
         f_fields_bg.close()
 
@@ -197,24 +221,62 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
                 else:
                     final_data[comp] = all_data[i][comp]
 
-        final_data["delta"] = all_data[0]["delta"]
-        final_data["band_code"] = all_data[0]["band_code"]
+        # review moved this from get seismograms hybrid, make sure it's OK
+        for comp in components:
+
+            if dt is not None:
+                # We don't need to align a sample to the peak of the source
+                # time function here.
+                new_npts = int(round((len(final_data[comp]) - 1) *
+                                     bwd_db.info.dt / dt, 6) + 1)
+                final_data[comp] = lanczos_interpolation(
+                    data=np.require(final_data[comp], requirements=["C"]),
+                    old_start=0, old_dt=bwd_db.info.dt, new_start=0, new_dt=dt,
+                    new_npts=new_npts, a=kernelwidth, window="blackman")
+                # The resampling assumes zeros outside the data range. This
+                # does not introduce any errors at the beginning as the data is
+                # actually zero there but it does affect the end. We will
+                # remove all samples that are affected by the boundary
+                # conditions here.
+                if round(dt / bwd_db.info.dt, 6) != 1.0:
+                    affected_area = kernelwidth * bwd_db.info.dt
+                    final_data[comp] = \
+                        final_data[comp][
+                        :-int(np.ceil(affected_area / dt))]
+
+            if dt is None:
+                print("HELLO")
+                dt_out = local_fields_data['dt']
+            else:
+                dt_out = dt
+
+            if type(dt_out) is np.ndarray:
+                dt_out = dt_out[0]
+
+            n_derivative = KIND_MAP[kind]
+
+            if n_derivative:
+                for comp in components:
+                    _diff_and_integrate(n_derivative=n_derivative,
+                                        data=final_data, comp=comp,
+                                        dt_out=dt_out)
 
         if return_obspy_stream:
             # Convert to an ObsPy Stream object.
             st = Stream()
+            band_code = get_band_code(dt_out)
             for comp in components:
                 tr = Trace(data=final_data[comp],
-                           header={"delta": final_data["delta"],
+                           header={"delta": dt_out,
                                    "station": receiver.station,
                                    "network": receiver.network,
                                    "location": receiver.location,
                                    "channel": "%sX%s" % (
-                                   final_data["band_code"], comp)})
+                                       band_code, comp)})
                 st += tr
             return st
         else:
-            return data
+            return final_data
     else:
         return None
 
@@ -322,9 +384,9 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
     # define how much we store in memory at once
     max_data_in_bytes = max_data_buffer_in_mb * 1024 ** 2
     ncomp = len(dumpfields) * 3
-    if "strain"in dumpfields:
+    if "strain" in dumpfields:
         ncomp += 3
-    if "stress"in dumpfields:
+    if "stress" in dumpfields:
         ncomp += 3
     if precision == 'f4':
         npoints_buf = int(floor(((max_data_in_bytes / 4) / ncomp) / ntimesteps))
@@ -467,17 +529,17 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
 
             if parallel_active:
                 with dset_mu.collective:
-                    dset_mu[idx1:idx2] = mu_all[:j+1]
+                    dset_mu[idx1:idx2] = mu_all[:j + 1]
                 with dset_rho.collective:
-                    dset_rho[idx1:idx2] = rho_all[:j+1]
+                    dset_rho[idx1:idx2] = rho_all[:j + 1]
                 with dset_lambda.collective:
-                    dset_lambda[idx1:idx2] = lbd_all[:j+1]
+                    dset_lambda[idx1:idx2] = lbd_all[:j + 1]
                 with dset_xi.collective:
-                    dset_xi[idx1:idx2] = xi_all[:j+1]
+                    dset_xi[idx1:idx2] = xi_all[:j + 1]
                 with dset_phi.collective:
-                    dset_phi[idx1:idx2] = phi_all[:j+1]
+                    dset_phi[idx1:idx2] = phi_all[:j + 1]
                 with dset_eta.collective:
-                    dset_eta[idx1:idx2] = eta_all[:j+1]
+                    dset_eta[idx1:idx2] = eta_all[:j + 1]
 
                 if "velocity" in dumpfields:
                     with dset_v.collective:
@@ -568,7 +630,7 @@ def hybrid_get_elastic_params(input_path, db_path, source=None, precision='f4'):
     dset_xi = grp.create_dataset("xi", (npoints,), dtype=precision)
     dset_phi = grp.create_dataset("phi", (npoints,), dtype=precision)
     dset_eta = grp.create_dataset("eta", (npoints,), dtype=precision)
-    
+
     mu_all = np.zeros(npoints_buf, dtype=precision)
     rho_all = np.zeros(npoints_buf, dtype=precision)
     lbd_all = np.zeros(npoints_buf, dtype=precision)
@@ -612,25 +674,25 @@ def hybrid_get_elastic_params(input_path, db_path, source=None, precision='f4'):
 
             if parallel_active:
                 with dset_mu.collective:
-                    dset_mu[idx1:idx2] = mu_all[:j+1]
+                    dset_mu[idx1:idx2] = mu_all[:j + 1]
                 with dset_rho.collective:
-                    dset_rho[idx1:idx2] = rho_all[:j+1]
+                    dset_rho[idx1:idx2] = rho_all[:j + 1]
                 with dset_lambda.collective:
-                    dset_lambda[idx1:idx2] = lbd_all[:j+1]
+                    dset_lambda[idx1:idx2] = lbd_all[:j + 1]
                 with dset_xi.collective:
-                    dset_xi[idx1:idx2] = xi_all[:j+1]
+                    dset_xi[idx1:idx2] = xi_all[:j + 1]
                 with dset_phi.collective:
-                    dset_phi[idx1:idx2] = phi_all[:j+1]
+                    dset_phi[idx1:idx2] = phi_all[:j + 1]
                 with dset_eta.collective:
-                    dset_eta[idx1:idx2] = eta_all[:j+1]
+                    dset_eta[idx1:idx2] = eta_all[:j + 1]
 
             else:
-                dset_mu[idx1:idx2] = mu_all[:j+1]
-                dset_rho[idx1:idx2] = rho_all[:j+1]
-                dset_lambda[idx1:idx2] = lbd_all[:j+1]
-                dset_xi[idx1:idx2] = xi_all[:j+1]
-                dset_phi[idx1:idx2] = phi_all[:j+1]
-                dset_eta[idx1:idx2] = eta_all[:j+1]
+                dset_mu[idx1:idx2] = mu_all[:j + 1]
+                dset_rho[idx1:idx2] = rho_all[:j + 1]
+                dset_lambda[idx1:idx2] = lbd_all[:j + 1]
+                dset_xi[idx1:idx2] = xi_all[:j + 1]
+                dset_phi[idx1:idx2] = phi_all[:j + 1]
+                dset_eta[idx1:idx2] = eta_all[:j + 1]
 
             buf_idx += 1
 
@@ -704,13 +766,18 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
 
         dset_coords = inputfile['local/coordinates']
         with dset_coords.collective:
-           coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
+            coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
 
         coords_file_data["rotmat_xyz_glob_to_loc"] = \
             inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
         # radius of the Earth OR radius of box top if at depth
         radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
-        # review [0] index for the above i.e. .attrs['radius_of_box_top'][0] ?
+
+        if type(radius_of_box_top) is np.ndarray:
+            radius_of_box_top = radius_of_box_top[0]
+
+        # coordinates[:, 2] *= -1.
+        # review remove this later when WPP outputs negative
         coordinates[:, 2] += radius_of_box_top
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
             coordinates, coords_file_data["rotmat_xyz_glob_to_loc"])
@@ -776,20 +843,15 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
     else:
         raise NotImplementedError
 
-    fields_file_data['displacement'] = \
-        grp_fields['displacement'][start_idx:end_idx, :, :]
-    fields_file_data['traction'] = None
-    fields_file_data['strain'] = None
+    if 'displacement' in grp_fields:
+        fields_file_data['displacement'] = \
+            grp_fields['displacement'][start_idx:end_idx, :, :]
+    if 'velocity' in grp_fields:  # ToDo remove this
+        fields_file_data['displacement'] = \
+            grp_fields['velocity'][start_idx:end_idx, :, :]
 
-    if 'traction' in grp_fields:
-        fields_file_data['traction'] = \
-            grp_fields['traction'][start_idx:end_idx, :, :]
-    elif 'strain' in grp_fields:
-        fields_file_data['strain'] = \
-            grp_fields['strain'][start_idx:end_idx, :, :]
-    else:
-        ValueError("Need strains or tractions to repropagate field via "
-                   "hybrid sources.")
+    fields_file_data['strain'] = \
+        grp_fields['strain'][start_idx:end_idx, :, :]
 
     dt = grp_fields.attrs['dt']
 
@@ -850,14 +912,19 @@ def _make_sources(coordinates, database):
     sources = []
     items = coordinates.shape[0]
 
-    for i in np.arange(items):
-        lat = 90.0 - coordinates[i, 0]
-        lon = coordinates[i, 1]
-        dep = (6371000.0 - coordinates[i, 2])
-        sources.append(Source(
-            latitude=lat,
-            longitude=lon,
-            depth_in_m=dep))
+    with open('coords_tpr_test.txt', 'w') as f:
+        for i in np.arange(items):
+            lat = 90.0 - coordinates[i, 0]
+            lon = coordinates[i, 1]
+            dep = (6371000.0 - coordinates[i, 2])
+            # if dep < 0.0:
+            # ToDo remove this
+            f.write("point: %f, coord: (%f, %f, %f) \n"
+                    % (i, lat, lon, dep))
+            sources.append(Source(
+                latitude=lat,
+                longitude=lon,
+                depth_in_m=dep))
 
     sources = _database_bounds_checks(sources, database)
 
@@ -896,11 +963,11 @@ def _database_bounds_checks(receivers, database):
             elif rec.depth_in_m <= 0.0:
                 rec.depth_in_m = 0.0
                 warnings.warn("The shallowest receiver to construct a hybrid"
-                                 "src is %.1f km deep. The database only has a"
-                                 "depth range from %.1f km to %.1f km." 
-                                 "Receiver depth set to 0." % (
-                                     min_depth / 1000.0, db_min_depth / 1000.0,
-                                     db_max_depth / 1000.0))
+                              "src is %.1f km deep. The database only has a"
+                              "depth range from %.1f km to %.1f km."
+                              "Receiver depth set to 0." % (
+                                  min_depth / 1000.0, db_min_depth / 1000.0,
+                                  db_max_depth / 1000.0))
             else:
                 raise NotImplementedError
 
@@ -926,13 +993,13 @@ def _database_bounds_checks(receivers, database):
 def _files_coordinates_checks(f_coords, f_fields_loc, f_fields_bg=None):
 
     if (('spherical' in f_coords) and ('spherical' not in f_fields_loc)) \
-        or (('local' in f_coords) and ('local' not in f_fields_loc)) \
-        or (('spherical' in f_fields_loc) and ('spherical' not in f_coords)) \
-        or (('local' in f_fields_loc) and ('local' not in f_coords)):
-            raise NotImplementedError("Only spherical or local groups "
-                                      "allowed. Both files must have the same "
-                                      "groups, i.e. be in the same "
-                                      "coordinates.")
+            or (('local' in f_coords) and ('local' not in f_fields_loc)) \
+            or (('spherical' in f_fields_loc) and ('spherical' not in f_coords)) \
+            or (('local' in f_fields_loc) and ('local' not in f_coords)):
+        raise NotImplementedError("Only spherical or local groups "
+                                  "allowed. Both files must have the same "
+                                  "groups, i.e. be in the same "
+                                  "coordinates.")
 
     if f_fields_bg is not None:
         if 'spherical' not in f_fields_bg:
