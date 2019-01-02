@@ -19,7 +19,7 @@ import math
 import os
 
 import numpy as np
-
+from scipy.fftpack import rfft, irfft
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(
     inspect.getfile(inspect.currentframe()))), "lib")
@@ -219,3 +219,78 @@ def c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
                    * (s[i] * s[j] * s[k] * s[l])
 
     return np.float64(c_ijkl_ani)
+
+
+def resample(data, old_sampling_rate, new_sampling_rate,
+             old_npts, no_filter=True, strict_length=True):
+    """
+    Resample data using Fourier method. Spectra are linearly
+    interpolated if required.
+
+    :type sampling_rate: float
+    :param sampling_rate: The sampling rate of the resampled signal.
+    :type window: array_like, callable, str, float, or tuple, optional
+    :param window: Specifies the window applied to the signal in the
+        Fourier domain. Defaults to ``'hanning'`` window. See
+        :func:`scipy.signal.resample` for details.
+    :type no_filter: bool, optional
+    :param no_filter: Deactivates automatic filtering if set to ``True``.
+        Defaults to ``True``.
+    :type strict_length: bool, optional
+    :param strict_length: Leave traces unchanged for which end time of
+        trace would change. Defaults to ``False``.
+
+    Uses :func:`scipy.signal.resample`. Because a Fourier method is used,
+    the signal is assumed to be periodic.
+
+    """
+
+    factor = float(old_sampling_rate) / float(new_sampling_rate)
+
+    # check if end time changes and this is not explicitly allowed
+    if strict_length:
+        mod_check = int(len(data) % factor)
+        if mod_check != 0.0:
+            data = np.concatenate((data, np.zeros(mod_check)))
+            mod_check2 = len(data) % factor
+            if mod_check2 != 0.0:
+                raise ValueError("something went wrong with padding")
+
+    # do automatic lowpass filtering
+    #if not no_filter:
+    #    # be sure filter still behaves good
+    #    if factor > 16:
+    #        msg = "Automatic filter design is unstable for resampling " + \
+    #              "factors (current sampling rate/new sampling rate) " + \
+    #              "above 16. Manual resampling is necessary."
+    #        raise ArithmeticError(msg)
+    #    freq = old_sampling_rate * 0.5 / float(factor)
+    #    self.filter('lowpass_cheby_2', freq=freq, maxorder=12)
+
+    # resample in the frequency domain. Make sure the byteorder is native.
+    x = rfft(data.newbyteorder("="))
+    # Cast the value to be inserted to the same dtype as the array to avoid
+    # issues with numpy rule 'safe'.
+    x = np.insert(x, 1, x.dtype.type(0))
+    if old_npts % 2 == 0:
+        x = np.append(x, [0])
+    x_r = x[::2]
+    x_i = x[1::2]
+
+    # interpolate
+    num = int(old_npts / factor)
+    df = 1.0 / old_npts * old_sampling_rate
+    d_large_f = 1.0 / num * new_sampling_rate
+    f = df * np.arange(0, old_npts // 2 + 1, dtype=np.int32)
+    n_large_f = num // 2 + 1
+    large_f = d_large_f * np.arange(0, n_large_f, dtype=np.int32)
+    large_y = np.zeros((2 * n_large_f))
+    large_y[::2] = np.interp(large_f, f, x_r)
+    large_y[1::2] = np.interp(large_f, f, x_i)
+
+    large_y = np.delete(large_y, 1)
+    if num % 2 == 0:
+        large_y = np.delete(large_y, -1)
+    data = irfft(large_y) * (float(num) / float(old_npts))
+
+    return data

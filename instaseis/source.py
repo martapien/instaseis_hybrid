@@ -1618,10 +1618,10 @@ class HybridSource(object):
     """
 
     def __init__(self, tpr, normal, weight, displacement, strain,
-                 elastic_params, dt, new_npts, bg_fields=None, rotmat=None):
+                 elastic_params, dt, duration, bg_fields=None, rotmat=None):
         self.pointsources = \
             self._create_pointsources(tpr, normal, weight, displacement, strain,
-                                      elastic_params, dt, new_npts,
+                                      elastic_params, dt, duration,
                                       bg_fields=bg_fields,
                                       rotmat=rotmat)
 
@@ -1632,7 +1632,7 @@ class HybridSource(object):
         return self.pointsources[index]
 
     def _create_pointsources(self, tpr, normal, weight, displacement,
-                             strain, elastic_params, dt, new_npts,
+                             strain, elastic_params, dt, duration,
                              bg_fields=None, rotmat=None):
         """generate point sources from local simulation fields"""
 
@@ -1663,6 +1663,7 @@ class HybridSource(object):
             n_xyz = None
             n_tpr = normal
 
+        new_npts = int(round(duration / dt, 6)) + 1
         difference = new_npts - len(displacement[:, 0])
         missing_samples = max(int(difference), 0)
 
