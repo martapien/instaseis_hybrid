@@ -611,7 +611,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         # we deal with STFs that are of different sampling than the DB
         duration = (self.info.npts - 1) * self.info.dt
         new_npts = int(round(duration / source.dt, 6)) + 1
-        new_nfft = int(next_pow_2(new_npts) * 2)
 
         stf_deconv_map = {
             0: self.info.sliprate,
@@ -625,6 +624,23 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         stf_deconv_f = np.fft.rfft(
             stf_deconv_map[STF_MAP[self.info.stf]],
             n=self.info.nfft)
+
+        sampling_rate_stf = 1. / source.dt
+        stf_npts = len(source.sliprate)
+        stf_conv_f = resample(source.sliprate, sampling_rate_stf,
+                              self.info.sampling_rate, stf_npts,
+                              strict_length=False)
+
+        difference = self.info.npts - len(stf_conv_f)
+        missing_samples = max(int(difference), 0)
+
+        if len(stf_conv_f) > self.info.npts:
+            stf_conv_f = stf_conv_f[:self.info.npts]
+        else:
+            stf_conv_f = np.concatenate((stf_conv_f, np.full(
+            missing_samples, stf_conv_f[-1])))
+
+        stf_conv_f = np.fft.rfft(stf_conv_f, n=self.info.nfft)
 
         # Can never be negative with the current logic.
         n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
@@ -663,33 +679,13 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 dataf = np.fft.rfft(taper * data[comp], n=self.info.nfft)
 
                 # Ensure numerical stability by not dividing with zero.
-                f = np.zeros(len(data[comp]))
-                f = np.fft.rfft(f, n=self.info.nfft)
+                f = stf_conv_f
                 _l = np.abs(stf_deconv_f)
                 _idx = np.where(_l > 0.0)
                 f[_idx] /= stf_deconv_f[_idx]
                 f[_l == 0] = 0 + 0j
 
                 data[comp] = np.fft.irfft(dataf * f)[:self.info.npts]
-
-                stf_conv_f = np.fft.rfft(source.sliprate,
-                                         n=new_nfft)
-
-                data_new = lanczos_interpolation(data=data[comp],
-                                                 old_start=0,
-                                                 old_dt=self.info.dt,
-                                                 new_start=0, new_dt=new_dt,
-                                                 new_npts=new_npts, a=12,
-                                                 window="blackman")
-
-                dataf = np.fft.rfft(data_new, n=new_nfft)
-
-                # Ensure numerical stability by not dividing with zero.
-                f = stf_conv_f
-                f[_l == 0] = 0 + 0j
-
-                data[comp] = np.fft.irfft(dataf * f)[:new_npts]
-                # data[comp] /= self.parsed_mesh.amplitude
 
         if dt is not None:
             if dt > new_dt:
