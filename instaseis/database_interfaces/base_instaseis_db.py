@@ -30,6 +30,7 @@ from scipy.integrate import cumtrapz
 import scipy.signal
 from scipy import interp
 
+import matplotlib.pylab as plt
 from ..source import Source, ForceSource, Receiver, \
     HybridSource, FiniteSource
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq, resample
@@ -915,7 +916,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             st += tr
         return st
 
-    def get_seismograms_hybrid(self, receiver, coords_data, loc_f_data,
+    def get_seismograms_hybrid_OLD(self, receiver, coords_data, loc_f_data,
                                bg_f_data=None, components=None):
 
         """
@@ -1064,8 +1065,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         return data_summed
 
-    def get_seismograms_hybrid_NEW(self, receiver, coords_data, loc_f_data,
-                                   bg_f_data=None, components=None):
+    def get_seismograms_hybrid(self, receiver, coords_data, loc_f_data,
+                               bg_f_data=None, components=None):
 
         """
         Extract seismograms for a hybrid source (constructed from an outcome
@@ -1170,6 +1171,9 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                     stf = resample(
                         source.sliprate, sampling_rate_stf,
                         self.info.sampling_rate, stf_npts)[:len(data[comp])]
+
+                    # review should we make sure that the stf is the length
+                    # of data?
 
                     # review why taking this out of the comp loop gives wrong
                     #  results?
