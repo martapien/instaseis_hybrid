@@ -245,8 +245,7 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
                         :-int(np.ceil(affected_area / dt))]
 
             if dt is None:
-                print("HELLO")
-                dt_out = local_fields_data['dt']
+                dt_out = bwd_db.info.dt
             else:
                 dt_out = dt
 
