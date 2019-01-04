@@ -226,8 +226,7 @@ class ForwardInstaseisDB(BaseNetCDFInstaseisDB):
                 final_strain[:, 0] += strain_3[:, 0] * fac_1
                 final_strain[:, 1] += strain_3[:, 1] * fac_1
                 final_strain[:, 2] += strain_3[:, 2] * fac_1
-                final_strain[:, 3] += strain_3[:, 3] * fac_2 # review is it
-                # definitely in ss pp zz zp zs sp ???
+                final_strain[:, 3] += strain_3[:, 3] * fac_2
                 final_strain[:, 4] += strain_3[:, 4] * fac_1
                 final_strain[:, 5] += strain_3[:, 5] * fac_2
 

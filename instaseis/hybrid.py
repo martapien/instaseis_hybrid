@@ -775,8 +775,6 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
         if type(radius_of_box_top) is np.ndarray:
             radius_of_box_top = radius_of_box_top[0]
 
-        # coordinates[:, 2] *= -1.
-        # review remove this later when WPP outputs negative
         coordinates[:, 2] += radius_of_box_top
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
             coordinates, coords_file_data["rotmat_xyz_glob_to_loc"])
@@ -842,12 +840,8 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
     else:
         raise NotImplementedError
 
-    if 'displacement' in grp_fields:
-        fields_file_data['displacement'] = \
-            grp_fields['displacement'][start_idx:end_idx, :, :]
-    if 'velocity' in grp_fields:  # ToDo remove this
-        fields_file_data['displacement'] = \
-            grp_fields['velocity'][start_idx:end_idx, :, :]
+    fields_file_data['displacement'] = \
+        grp_fields['displacement'][start_idx:end_idx, :, :]
 
     fields_file_data['strain'] = \
         grp_fields['strain'][start_idx:end_idx, :, :]
