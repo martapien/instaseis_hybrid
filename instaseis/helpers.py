@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 from scipy.fftpack import rfft, irfft
+from obspy.signal.filter import lowpass_cheby_2, lowpass
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(
     inspect.getfile(inspect.currentframe()))), "lib")
@@ -222,24 +223,34 @@ def c_ijkl_ani(lbd, mu, xi_ani, phi_ani, eta_ani, theta_fa, phi_fa,
 
 
 def resample(data, old_sampling_rate, new_sampling_rate,
-             old_npts, no_filter=True, strict_length=True):
+             old_npts, strict_length=True, no_filter=True,
+             filter_type='lowpass_butterworth', maxorder=12, corners=4,
+             zerophase=True):
     """
     Resample data using Fourier method. Spectra are linearly
     interpolated if required.
 
-    :type sampling_rate: float
-    :param sampling_rate: The sampling rate of the resampled signal.
-    :type window: array_like, callable, str, float, or tuple, optional
-    :param window: Specifies the window applied to the signal in the
-        Fourier domain. Defaults to ``'hanning'`` window. See
-        :func:`scipy.signal.resample` for details.
+    :type data: array
+    :param data: Data to resample.
+    :type old_sampling_rate: float
+    :param old_sampling_rate: The original sampling rate of the signal.
+    :type new_sampling_rate: float
+    :param new_sampling_rate: The sampling rate of the resampled signal.
+    :type old_npts: float
+    :param old_npts: Number of points of the original signal.
     :type no_filter: bool, optional
     :param no_filter: Deactivates automatic filtering if set to ``True``.
         Defaults to ``True``.
+    :type filter_type: str, optional
+    :param filter_type: Lowpass filter to  use if automatic filtering is set 
+        to true. Possible options: ``lowpass_cheby_2`` or 
+        ``lowpass_butterworth``. Defaults to  ``lowpass_butterworth``.
     :type strict_length: bool, optional
     :param strict_length: Leave traces unchanged for which end time of
         trace would change. Defaults to ``False``.
 
+    :return: Resampled data. 
+    
     Uses :func:`scipy.signal.resample`. Because a Fourier method is used,
     the signal is assumed to be periodic.
 
@@ -257,15 +268,19 @@ def resample(data, old_sampling_rate, new_sampling_rate,
                 raise ValueError("something went wrong with padding")
 
     # do automatic lowpass filtering
-    #if not no_filter:
-    #    # be sure filter still behaves good
-    #    if factor > 16:
-    #        msg = "Automatic filter design is unstable for resampling " + \
-    #              "factors (current sampling rate/new sampling rate) " + \
-    #              "above 16. Manual resampling is necessary."
-    #        raise ArithmeticError(msg)
-    #    freq = old_sampling_rate * 0.5 / float(factor)
-    #    self.filter('lowpass_cheby_2', freq=freq, maxorder=12)
+    if not no_filter:
+        # be sure filter still behaves good
+        # ToDo does not seem to introduce problems (except the time shift)
+        # with the specfem-Instaseis test, check with Lion what the 16 is about?
+        #if factor > 16:
+        #    msg = "Automatic filter design is unstable for resampling " + \
+        #          "factors (current sampling rate/new sampling rate) " + \
+        #          "above 16. Manual resampling is necessary."
+        #    raise ArithmeticError(msg)
+        freq = old_sampling_rate * 0.5 / float(factor)
+        data = filter_data(data=data, filter_type=filter_type, freq=freq,
+                           df=old_sampling_rate, maxorder=maxorder,
+                           corners=corners, zerophase=zerophase)
 
     # resample in the frequency domain. Make sure the byteorder is native.
     x = rfft(data.newbyteorder("="))
@@ -292,5 +307,42 @@ def resample(data, old_sampling_rate, new_sampling_rate,
     if num % 2 == 0:
         large_y = np.delete(large_y, -1)
     data = irfft(large_y) * (float(num) / float(old_npts))
+
+    return data
+
+
+def filter_data(data, filter_type, freq, df, maxorder=12, corners=4,
+                zerophase=True):
+
+    """
+    Filter data removing data over certain frequency ``freq``.
+    
+    :param data: Data to filter.
+    :param filter_type: Type of filter to use.
+    :param freq: Filter corner frequency.
+    :param df: Sampling rate in Hz.
+    :param maxorder: Maximal order of the designed cheby2 filter
+    :param corners: Filter corners / order for the butterworth lowpass filter.
+    :param zerophase: If True, apply filter once forwards and once backwards. 
+        This results in twice the number of corners but zero phase shift in 
+        the resulting filtered trace.
+        
+    :return: Filtered data. 
+    
+    Uses :func:`scipy.signal.filter.lowpass_cheby_2` or  
+    :func:`scipy.signal.filter.lowpass`.
+    
+    """
+
+    if filter_type == "lowpass_cheby_2":
+        data = lowpass_cheby_2(data=data, freq=freq, df=df,
+                               maxorder=maxorder)
+
+    elif filter_type == "lowpass_butterworth":
+        data = lowpass(data=data, freq=freq, df=df, corners=corners,
+                       zerophase=zerophase)
+
+    else:
+        raise ValueError("Unknown filter type.")
 
     return data

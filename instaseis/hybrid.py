@@ -135,8 +135,8 @@ def hybrid_extraction(input_path, output_path, fwd_db_path, dt, source,
 
 
 def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
-                         bg_field_file=None, components=None, dt=None,
-                         kind='displacement', kernelwidth=12,
+                         no_filter=True, bg_field_file=None, components=None,
+                         dt=None, kind='displacement', kernelwidth=12,
                          return_obspy_stream=True):
 
     if coords_path.endswith('.hdf5') or not coords_path.endswith('.nc'):
@@ -195,8 +195,8 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
         bg_fields_data = None
 
     data = bwd_db.get_seismograms_hybrid(
-        receiver, coords_data, local_fields_data, bg_f_data=bg_fields_data,
-        components=components)
+        receiver, coords_data, local_fields_data, no_filter=no_filter,
+        bg_f_data=bg_fields_data, components=components)
 
     f_coords.close()
     f_fields_loc.close()

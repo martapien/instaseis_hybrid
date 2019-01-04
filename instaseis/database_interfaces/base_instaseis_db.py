@@ -30,7 +30,6 @@ from scipy.integrate import cumtrapz
 import scipy.signal
 from scipy import interp
 
-import matplotlib.pylab as plt
 from ..source import Source, ForceSource, Receiver, \
     HybridSource, FiniteSource
 from ..helpers import get_band_code, sizeof_fmt, rfftfreq, resample
@@ -1062,7 +1061,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         return data_summed
 
     def get_seismograms_hybrid(self, receiver, coords_data, loc_f_data,
-                               bg_f_data=None, components=None):
+                               no_filter=True, bg_f_data=None, components=None):
 
         """
         Extract seismograms for a hybrid source (constructed from an outcome
@@ -1164,9 +1163,11 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 for comp in components:
                     # ToDo add a frequency check or filtering (make sure that
                     #  filter is stable!!)
-                    stf = resample(
-                        source.sliprate, sampling_rate_stf,
-                        self.info.sampling_rate, stf_npts)[:len(data[comp])]
+                    stf = resample(data=source.sliprate,
+                                   old_sampling_rate=sampling_rate_stf,
+                                   new_sampling_rate=self.info.sampling_rate,
+                                   old_npts=stf_npts,
+                                   no_filter=no_filter)[:len(data[comp])]
 
                     # review should we make sure that the stf is the length
                     # of data?
