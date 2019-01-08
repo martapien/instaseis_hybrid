@@ -354,41 +354,49 @@ def resample_test(test_path, new_sampling_rate):
 
     file_in = h5py.File(test_path, 'r')
 
-    data = file_in['local/velocity']
+    if 'local/velocity' in file_in:
+        grp_name = 'local/velocity'
+        dset_name = 'velocity'
+    else:
+        grp_name = 'local/displacement'
+        dset_name = 'displacement'
 
-    npts_space = file_in['local/velocity'].shape[0]
-    npts_time = file_in['local/velocity'].shape[1]
+    #print(grp_name)
+    data = file_in[grp_name]
+    #print(file_in[grp_name].shape)
+    npts_space = file_in[grp_name].shape[0]
+    npts_time = file_in[grp_name].shape[1]
     dt = file_in['local'].attrs['dt']
     if type(dt) is np.ndarray:
         dt = dt[0]
 
     old_sampling_rate = 1. / dt
-    file_out = h5py.File("fields_resampled", 'w')
+    file_out = h5py.File("fields_resampled.hdf5", 'w')
 
     grp_out = file_out.create_group('local')
-
-    dset_out = grp_out.create_dataset("velocity", file_in['local/velocity'],
-                                      dtype=np.float32)
 
     for i in np.arange(npts_space):
 
         data_old = data[i, :, :]
 
-        data_new = np.zeros_like(data_old)
+        data_new_0 = resample(data_old[:, 0], old_sampling_rate, new_sampling_rate, npts_time,
+                              strict_length=False, no_filter=False,
+                              filter_type='lowpass_butterworth', zerophase=True)
+        data_new_1 = resample(data_old[:, 1], old_sampling_rate, new_sampling_rate, npts_time,
+                      strict_length=False, no_filter=False,
+                      filter_type='lowpass_butterworth', zerophase=True)
+        data_new_2 = resample(data_old[:, 2], old_sampling_rate, new_sampling_rate, npts_time,
+                      strict_length=False, no_filter=False,
+                      filter_type='lowpass_butterworth', zerophase=True)
 
-        data_new[:, 0] = resample(
-            data_old[:, 0], old_sampling_rate, new_sampling_rate, npts_time,
-            strict_length=True, no_filter=False,
-            filter_type='lowpass_butterworth', zerophase=True)
-        data_new[:, 1] = resample(
-            data_old[:, 1], old_sampling_rate, new_sampling_rate, npts_time,
-            strict_length=True, no_filter=False,
-            filter_type='lowpass_butterworth', zerophase=True)
-        data_new[:, 2] = resample(
-            data_old[:, 2], old_sampling_rate, new_sampling_rate, npts_time,
-            strict_length=True, no_filter=False,
-            filter_type='lowpass_butterworth', zerophase=True)
-
+        data_new = np.array([data_new_0, data_new_1, data_new_2]).T
+                
+        #print(data_new.shape) 
+                            
+        if i == 0:
+            dset_out = grp_out.create_dataset(dset_name, (npts_space, data_new.shape[0], 3), dtype=np.float32)
+            #print(dset_out.shape)
+            #return
         dset_out[i, :, :] = data_new
 
     file_in.close()
