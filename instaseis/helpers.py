@@ -21,6 +21,7 @@ import os
 import numpy as np
 from scipy.fftpack import rfft, irfft
 from obspy.signal.filter import lowpass_cheby_2, lowpass
+import h5py
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(
     inspect.getfile(inspect.currentframe()))), "lib")
@@ -346,3 +347,50 @@ def filter_data(data, filter_type, freq, df, maxorder=12, corners=4,
         raise ValueError("Unknown filter type.")
 
     return data
+
+
+def resample_test(test_path, new_sampling_rate):
+    # slow as reads and dumps pt by pt but just a test!
+
+    file_in = h5py.File(test_path, 'r')
+
+    data = file_in['local/velocity']
+
+    npts_space = file_in['local/velocity'].shape[0]
+    npts_time = file_in['local/velocity'].shape[1]
+    dt = file_in['local'].attrs['dt']
+    if type(dt) is np.ndarray:
+        dt = dt[0]
+
+    old_sampling_rate = 1. / dt
+    file_out = h5py.File("fields_resampled", 'w')
+
+    grp_out = file_out.create_group('local')
+
+    dset_out = grp_out.create_dataset("velocity", file_in['local/velocity'],
+                                      dtype=np.float32)
+
+    for i in np.arange(npts_space):
+
+        data_old = data[i, :, :]
+
+        data_new = np.zeros_like(data_old)
+
+        data_new[:, 0] = resample(
+            data_old[:, 0], old_sampling_rate, new_sampling_rate, npts_time,
+            strict_length=True, no_filter=False,
+            filter_type='lowpass_butterworth', zerophase=True)
+        data_new[:, 1] = resample(
+            data_old[:, 1], old_sampling_rate, new_sampling_rate, npts_time,
+            strict_length=True, no_filter=False,
+            filter_type='lowpass_butterworth', zerophase=True)
+        data_new[:, 2] = resample(
+            data_old[:, 2], old_sampling_rate, new_sampling_rate, npts_time,
+            strict_length=True, no_filter=False,
+            filter_type='lowpass_butterworth', zerophase=True)
+
+        dset_out[i, :, :] = data_new
+
+    file_in.close()
+    file_out.close()
+    
