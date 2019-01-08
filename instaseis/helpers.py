@@ -21,6 +21,7 @@ import os
 import numpy as np
 from scipy.fftpack import rfft, irfft
 from obspy.signal.filter import lowpass_cheby_2, lowpass
+from obspy.signal.interpolation import weighted_average_slopes
 import h5py
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(
@@ -312,6 +313,40 @@ def resample(data, old_sampling_rate, new_sampling_rate,
     return data
 
 
+def interpolate(data, old_sampling_rate, new_sampling_rate, no_filter=True,
+             filter_type='lowpass_butterworth', maxorder=12, corners=4,
+             zerophase=True):
+
+    factor = float(old_sampling_rate) / float(new_sampling_rate)
+    old_dt = 1. / old_sampling_rate
+    new_dt = 1. / new_sampling_rate
+    old_start = 0.0
+    new_start = 0.0
+
+    duration = (len(data) - 1) * old_dt
+    new_npts = int(round(duration / new_dt, 6)) + 1
+
+    # do automatic lowpass filtering
+    if not no_filter:
+        # be sure filter still behaves good
+        # ToDo does not seem to introduce problems (except the time shift)
+        # with the specfem-Instaseis test, check with Lion what the 16 is about?
+        # if factor > 16:
+        #    msg = "Automatic filter design is unstable for resampling " + \
+        #          "factors (current sampling rate/new sampling rate) " + \
+        #          "above 16. Manual resampling is necessary."
+        #    raise ArithmeticError(msg)
+        freq = old_sampling_rate * 0.5 / float(factor)
+        data = filter_data(data=data, filter_type=filter_type, freq=freq,
+                           df=old_sampling_rate, maxorder=maxorder,
+                           corners=corners, zerophase=zerophase)
+
+    data = weighted_average_slopes(data, old_start, old_dt, new_start,
+                                   new_dt, new_npts)
+
+    return data
+
+
 def filter_data(data, filter_type, freq, df, maxorder=12, corners=4,
                 zerophase=True):
 
@@ -361,9 +396,7 @@ def resample_test(test_path, new_sampling_rate):
         grp_name = 'local/displacement'
         dset_name = 'displacement'
 
-    #print(grp_name)
     data = file_in[grp_name]
-    #print(file_in[grp_name].shape)
     npts_space = file_in[grp_name].shape[0]
     npts_time = file_in[grp_name].shape[1]
     dt = file_in['local'].attrs['dt']
@@ -379,6 +412,7 @@ def resample_test(test_path, new_sampling_rate):
 
         data_old = data[i, :, :]
 
+        """
         data_new_0 = resample(data_old[:, 0], old_sampling_rate, new_sampling_rate, npts_time,
                               strict_length=False, no_filter=False,
                               filter_type='lowpass_butterworth', zerophase=True)
@@ -388,17 +422,30 @@ def resample_test(test_path, new_sampling_rate):
         data_new_2 = resample(data_old[:, 2], old_sampling_rate, new_sampling_rate, npts_time,
                       strict_length=False, no_filter=False,
                       filter_type='lowpass_butterworth', zerophase=True)
+        """
+
+        data_new_0 = interpolate(data_old[:, 0], old_sampling_rate,
+                                 new_sampling_rate, no_filter=True,
+                                 filter_type='lowpass_butterworth',
+                                 zerophase=True)
+        data_new_1 = interpolate(data_old[:, 1], old_sampling_rate,
+                                 new_sampling_rate, no_filter=True,
+                                 filter_type='lowpass_butterworth',
+                                 zerophase=True)
+        data_new_2 = interpolate(data_old[:, 2], old_sampling_rate,
+                                 new_sampling_rate, no_filter=True,
+                                 filter_type='lowpass_butterworth',
+                                 zerophase=True)
 
         data_new = np.array([data_new_0, data_new_1, data_new_2]).T
-                
-        #print(data_new.shape) 
-                            
+
         if i == 0:
-            dset_out = grp_out.create_dataset(dset_name, (npts_space, data_new.shape[0], 3), dtype=np.float32)
-            #print(dset_out.shape)
-            #return
+            dset_out = grp_out.create_dataset(
+                dset_name, (npts_space, data_new.shape[0], 3),
+                dtype=np.float32)
+
         dset_out[i, :, :] = data_new
 
     file_in.close()
     file_out.close()
-    
+
