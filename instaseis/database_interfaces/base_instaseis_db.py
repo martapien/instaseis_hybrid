@@ -32,7 +32,7 @@ from scipy import interp
 
 from ..source import Source, ForceSource, Receiver, \
     HybridSource, FiniteSource
-from ..helpers import get_band_code, sizeof_fmt, rfftfreq, resample
+from ..helpers import get_band_code, sizeof_fmt, rfftfreq, interpolate
 
 DEFAULT_MU = 32e9
 
@@ -331,7 +331,9 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             # order to reduce boundary effects at the start of the signal.
             #
             # NEVER to this before the resampling! The error can be really big.
+            print(n_derivative)
             if n_derivative:
+                print("Hello")
                 _diff_and_integrate(n_derivative=n_derivative, data=data,
                                     comp=comp, dt_out=dt_out)
 
@@ -419,18 +421,19 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
         stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
 
-        if interpolation == 'lanczos':
-            stf_deconv = lanczos_interpolation(data=stf_deconv,
-                                               old_start=0, old_dt=self.info.dt,
-                                               new_start=0, new_dt=new_dt,
-                                               new_npts=new_npts, a=kernelwidth,
-                                               window="blackman")
-        else:
-            t_new = np.linspace(0, new_npts * new_dt, new_npts, endpoint=False)
-            t_old = np.linspace(0, self.info.dt * self.info.npts,
-                                self.info.npts, endpoint=False)
-            stf_deconv = interp(t_new, t_old, stf_deconv)
-            print("new_npts %f, len stfdeconv %f" % (new_npts, len(stf_deconv)))
+        if new_dt != self.info.dt:
+            if interpolation == 'lanczos':
+                stf_deconv = lanczos_interpolation(data=stf_deconv,
+                                                   old_start=0, old_dt=self.info.dt,
+                                                   new_start=0, new_dt=new_dt,
+                                                   new_npts=new_npts, a=kernelwidth,
+                                                   window="blackman")
+            else:
+                t_new = np.linspace(0, new_npts * new_dt, new_npts, endpoint=False)
+                t_old = np.linspace(0, self.info.dt * self.info.npts,
+                                    self.info.npts, endpoint=False)
+                stf_deconv = interp(t_new, t_old, stf_deconv)
+                print("new_npts %f, len stfdeconv %f" % (new_npts, len(stf_deconv)))
 
         # Can never be negative with the current logic.
         n_derivative = KIND_MAP[kind] - STF_MAP[self.info.stf]
@@ -468,14 +471,16 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
                 stf_conv_f = np.fft.rfft(source.sliprate[:new_npts],
                                          n=new_nfft)
-
-                data_new = lanczos_interpolation(data=data[comp],
-                                                 old_start=0,
-                                                 old_dt=self.info.dt,
-                                                 new_start=0, new_dt=new_dt,
-                                                 new_npts=new_npts,
-                                                 a=kernelwidth,
-                                                 window="blackman")
+                if new_dt != self.info.dt:
+                    data_new = lanczos_interpolation(data=data[comp],
+                                                     old_start=0,
+                                                     old_dt=self.info.dt,
+                                                     new_start=0, new_dt=new_dt,
+                                                     new_npts=new_npts,
+                                                     a=kernelwidth,
+                                                     window="blackman")
+                else:
+                    data_new = data[comp]
 
                 # if source.time_shift is not None:
                 #    stf_conv_f *= \
@@ -1116,7 +1121,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         dt_stf = loc_f_data['dt']
         sampling_rate_stf = 1. / dt_stf
         duration = (self.info.npts - 1) * self.info.dt
-        stf_npts = int(round(duration / dt_stf, 6)) + 1
 
         for i in np.arange(len(coords_data["normals"])):
 
@@ -1163,10 +1167,9 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
                 for comp in components:
                     # ToDo add a frequency check or filtering (make sure that
                     #  filter is stable!!)
-                    stf = resample(data=source.sliprate,
+                    stf = interpolate(data=source.sliprate,
                                    old_sampling_rate=sampling_rate_stf,
                                    new_sampling_rate=self.info.sampling_rate,
-                                   old_npts=stf_npts,
                                    no_filter=no_filter)[:len(data[comp])]
 
                     # review should we make sure that the stf is the length
