@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 from scipy.fftpack import rfft, irfft
+from scipy.signal import hann
 from obspy.signal.filter import lowpass_cheby_2, lowpass
 from obspy.signal.interpolation import weighted_average_slopes
 import h5py
@@ -371,17 +372,29 @@ def filter_data(data, filter_type, freq, df, maxorder=12, corners=4,
     """
 
     if filter_type == "lowpass_cheby_2":
+        # Note: slower than butterworth
         data = lowpass_cheby_2(data=data, freq=freq, df=df,
                                maxorder=maxorder)
 
     elif filter_type == "lowpass_butterworth":
-        data = lowpass(data=data, freq=freq, df=df, corners=corners,
-                       zerophase=zerophase)
+        if zerophase:
+            # review do we want it just here or for every filter?
+            pad_len = int(math.ceil(0.08*len(data)))
+            padding = np.full(pad_len, data[-1])
+            data = np.concatenate((data, padding))
+            taper = np.ones_like(data)
+            taper[-pad_len:] = hann(pad_len * 2)[pad_len:]
+            data = taper * data
+            data = lowpass(data=data, freq=freq, df=df, corners=corners,
+                           zerophase=zerophase)[:-pad_len]
+        else:
+            data = lowpass(data=data, freq=freq, df=df, corners=corners,
+                           zerophase=zerophase)
 
     else:
         raise ValueError("Unknown filter type.")
 
-    return data
+    return np.require(data, requirements=["C_CONTIGUOUS"], dtype=np.float64)
 
 
 def resample_test(test_path, new_sampling_rate):
@@ -404,14 +417,17 @@ def resample_test(test_path, new_sampling_rate):
         dt = dt[0]
 
     old_sampling_rate = 1. / dt
-    file_out = h5py.File("fields_resampled.hdf5", 'w')
+    file_out = h5py.File("fields_interpolated_cheby2.hdf5", 'w')
 
     grp_out = file_out.create_group('local')
-
+    filter_type = 'lowpass_cheby_2'
+    zerophase = False
+    no_filter = False
     for i in np.arange(npts_space):
 
-        data_old = data[i, :, :]
-
+        #data_old = np.require(data[i, :, :], dtype=np.float64, 
+        #        requirements=["C_CONTIGUOUS"])
+        data_old = np.array(data[i, :, :], dtype=np.float64)
         """
         data_new_0 = resample(data_old[:, 0], old_sampling_rate, new_sampling_rate, npts_time,
                               strict_length=False, no_filter=False,
@@ -424,18 +440,21 @@ def resample_test(test_path, new_sampling_rate):
                       filter_type='lowpass_butterworth', zerophase=True)
         """
 
-        data_new_0 = interpolate(data_old[:, 0], old_sampling_rate,
-                                 new_sampling_rate, no_filter=True,
-                                 filter_type='lowpass_butterworth',
-                                 zerophase=True)
-        data_new_1 = interpolate(data_old[:, 1], old_sampling_rate,
-                                 new_sampling_rate, no_filter=True,
-                                 filter_type='lowpass_butterworth',
-                                 zerophase=True)
-        data_new_2 = interpolate(data_old[:, 2], old_sampling_rate,
-                                 new_sampling_rate, no_filter=True,
-                                 filter_type='lowpass_butterworth',
-                                 zerophase=True)
+        data_new_0 = interpolate(np.require(data_old[:, 0], requirements=["C_CONTIGUOUS"]), 
+                                 old_sampling_rate,
+                                 new_sampling_rate, no_filter=no_filter,
+                                 filter_type=filter_type,
+                                 zerophase=zerophase)
+        data_new_1 = interpolate(np.require(data_old[:, 1], requirements=["C_CONTIGUOUS"]),
+                                 old_sampling_rate,
+                                 new_sampling_rate, no_filter=no_filter,
+                                 filter_type=filter_type,
+                                 zerophase=zerophase)
+        data_new_2 = interpolate(np.require(data_old[:, 2], requirements=["C_CONTIGUOUS"]),
+                                 old_sampling_rate,
+                                 new_sampling_rate, no_filter=no_filter,
+                                 filter_type=filter_type,
+                                 zerophase=zerophase)
 
         data_new = np.array([data_new_0, data_new_1, data_new_2]).T
 
