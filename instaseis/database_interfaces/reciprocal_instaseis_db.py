@@ -343,36 +343,12 @@ class ReciprocalInstaseisDB(BaseNetCDFInstaseisDB):
                 self.meshes.pz, ei.id_elem, ei.gll_point_ids, G, GT,
                 ei.col_points_xi, ei.col_points_eta, ei.corner_points,
                 ei.eltype, ei.axis, ei.xi, ei.eta)
-            """
-            strain_z = self._get_strain_interp(
-                self.meshes.pz, ei.id_elem, ei.gll_point_ids, G, GT,
-                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
-                ei.eltype, ei.axis, ei.xi, ei.eta)
-            displ_z = self._get_displacement(self.meshes.pz, ei.id_elem,
-                                             ei.gll_point_ids,
-                                             ei.col_points_xi,
-                                             ei.col_points_eta, ei.xi,
-                                             ei.eta)
-            """
 
         if any(comp in components for comp in ['N', 'E', 'R', 'T']):
             displ_x, strain_x = self._get_displacement_and_strain_interp(
                 self.meshes.px, ei.id_elem, ei.gll_point_ids, G, GT,
                 ei.col_points_xi, ei.col_points_eta, ei.corner_points,
                 ei.eltype, ei.axis, ei.xi, ei.eta)
-            """
-            # for moment tensor sources
-            strain_x = self._get_strain_interp(
-                self.meshes.px, ei.id_elem, ei.gll_point_ids, G, GT,
-                ei.col_points_xi, ei.col_points_eta, ei.corner_points,
-                ei.eltype, ei.axis, ei.xi, ei.eta)
-            # for force sources
-            displ_x = self._get_displacement(self.meshes.px, ei.id_elem,
-                                             ei.gll_point_ids,
-                                             ei.col_points_xi,
-                                             ei.col_points_eta, ei.xi,
-                                             ei.eta)
-            """
 
         for _i, source in enumerate(sources.pointsources):
             data = {}
