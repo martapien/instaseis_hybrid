@@ -796,9 +796,6 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
                     coords_file_data["weights"] = \
                         np.array(dset_weight[start_idx:end_idx])  # in tpr
 
-        if type(radius_of_box_top) is np.ndarray:
-            radius_of_box_top = radius_of_box_top[0]
-
         coords_file_data["radius_of_box_top"] = radius_of_box_top
     else:
         raise NotImplementedError('Input file must be either in spherical '
@@ -1076,3 +1073,4 @@ def _get_cijkl(elastic_params):
 
     return c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, \
            c_46, c_55, c_66
+
