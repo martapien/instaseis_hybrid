@@ -916,155 +916,6 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             st += tr
         return st
 
-    def get_seismograms_hybrid_OLD(self, receiver, coords_data, loc_f_data,
-                               bg_f_data=None, components=None):
-
-        """
-        Extract seismograms for a hybrid source (constructed from an outcome
-        of a local simulation) from a reciprocal Instaseis database.
-        :param sources: A collection of point sources per point in space.
-        :type sources: :class:`~instaseis.source.HybridSource`
-        :param receiver: The seismic receiver.
-        :type receiver: :class:`instaseis.source.Receiver`
-        :type components: tuple of str, optional
-        :param components: Which components to calculate. Must be a tuple
-            containing any combination of ``"Z"``, ``"N"``, ``"E"``,
-            ``"R"``, and ``"T"``. Defaults to ``["Z", "N", "E"]`` for two
-            component databases, to ``["N", "E"]`` for horizontal only
-            databases, and to ``["Z"]`` for vertical only databases.
-        :type kind: str, optional
-        :param kind: The desired units of the seismogram:
-            ``"displacement"``, ``"velocity"``, or ``"acceleration"``.
-        :type dt: float, optional
-        :param dt: Desired sampling rate of the seismograms. Resampling is done
-            using a Lanczos kernel. If specified, the sampling rate must be
-            higher than the sampling rate of the local hybrid simulation.
-        :type kernelwidth: int, optional
-        :param kernelwidth: The width of the sinc kernel used for resampling in
-            terms of the original sampling interval. Best choose something
-            between 10 and 20.
-
-        :returns: Multi component hybrid source seismogram.
-        :rtype: :class:`obspy.core.stream.Stream`
-        """
-
-        if components is None:
-            components = self.default_components
-
-        if not self.info.is_reciprocal:
-            raise NotImplementedError
-
-        if loc_f_data['coordinate_system'] == 'local':
-            if "rotmat_xyz_glob_to_loc" not in coords_data:
-                raise NotImplementedError("Need the rotation matrix in the "
-                                          "local coordinates dumped by the "
-                                          "solver to rotate the local fields "
-                                          "from local coordinates to tpr.")
-            rotmat = coords_data["rotmat_xyz_glob_to_loc"]
-        elif loc_f_data['coordinate_system'] == 'spherical':
-            rotmat = None
-        else:
-            raise ValueError('Local file data has to be in either local or '
-                             'spherical coordinates.')
-
-        data_summed = {}
-
-        dt_stf = loc_f_data['dt']
-        duration = (self.info.npts - 1) * self.info.dt
-        new_npts = int(round(duration / dt_stf, 6)) + 1
-        new_nfft = int(next_pow_2(new_npts) * 2)
-
-        for i in np.arange(len(coords_data["normals"])):
-
-            if bg_f_data is not None:
-                bg_fields = {}
-                bg_fields['displacement'] = bg_f_data['displacement'][i, :, :],
-                bg_fields['strain'] = bg_f_data['strain'][i, :, :]
-            else:
-                bg_fields = None
-
-            sources = HybridSource(
-                 coords_data["coordinates"][i, :], coords_data["normals"][i, :],
-                 coords_data["weights"][i], loc_f_data['displacement'][i, :, :],
-                 loc_f_data['strain'][i, :, :],
-                 coords_data['elastic_parameters'][i, :],
-                 dt_stf, duration, bg_fields=bg_fields, rotmat=rotmat)
-
-            # ToDo the params have to be ready before this to build the
-            # sources... - awkward, try to restructure
-
-            params, data_all = self._get_seismograms_multiple(
-                sources, receiver, components)
-
-            if STF_MAP[self.info.stf] not in [1]:
-                raise NotImplementedError(
-                    'deconvolution not implemented for stf %s'
-                    'reciprocal database for hybrid is required to have a '
-                    'gauss_0 or dirac_0 stf'
-                    % (self.info.stf))
-
-            stf_deconv_map = {
-                0: self.info.sliprate,
-                1: self.info.slip}
-
-            new_dt = sources.pointsources[0].dt
-            if new_dt > self.info.dt:  # we can only upsample the db
-                raise ValueError("dt of the source not compatible")
-
-            stf_deconv = stf_deconv_map[STF_MAP[self.info.stf]]
-
-            stf_deconv = lanczos_interpolation(data=stf_deconv,
-                                               old_start=0,
-                                               old_dt=self.info.dt,
-                                               new_start=0, new_dt=new_dt,
-                                               new_npts=new_npts, a=12,
-                                               window="blackman")
-            stf_deconv_f = np.fft.rfft(stf_deconv, n=new_nfft)
-
-            for _i, source in enumerate(sources.pointsources):
-
-                if source.dt is None or source.sliprate is None:
-                    raise ValueError("Source has no source time function.")
-                data = data_all[_i]
-
-                for comp in components:
-                    # We assume here that the sliprate is well-behaved,
-                    # e.g. zeros at the boundaries and no energy above the mesh
-                    # resolution.
-
-                    # review why taking this out of the comp loop gives wrong
-                    #  results?
-                    stf_conv_f = np.fft.rfft(source.sliprate, n=new_nfft)
-
-                    data_new = lanczos_interpolation(
-                        data=data[comp], old_start=0, old_dt=self.info.dt,
-                        new_start=0, new_dt=new_dt, new_npts=new_npts, a=12,
-                        window="blackman")
-
-                    # Apply a 5 percent, at least 5 samples taper at the end.
-                    # The first sample is guaranteed to be zero in any case.
-                    tlen = max(int(math.ceil(0.05 * len(data_new))), 5)
-                    taper = np.ones_like(data_new)
-                    taper[-tlen:] = scipy.signal.hann(tlen * 2)[tlen:]
-                    dataf = np.fft.rfft(taper * data_new, n=new_nfft)
-
-                    # Ensure numerical stability by not dividing with zero.
-                    f = stf_conv_f
-                    _l = np.abs(stf_deconv_f)
-                    _idx = np.where(_l > 0.0)
-                    f[_idx] /= stf_deconv_f[_idx]
-                    f[_l == 0] = 0 + 0j
-
-                    data[comp] = np.fft.irfft(dataf * f)[:new_npts]
-
-                for comp in components:
-                    if comp in data_summed:
-                        data_summed[comp] += data[comp]
-                    else:
-                        data_summed[comp] = data[comp]
-
-        return data_summed
-
     def get_seismograms_hybrid(self, receiver, coords_data, loc_f_data,
                                no_filter=True, bg_f_data=None, components=None):
 
@@ -1104,12 +955,13 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
             raise NotImplementedError
 
         if loc_f_data['coordinate_system'] == 'local':
-            if "rotmat_xyz_glob_to_loc" not in coords_data:
+            if "rotmat_xyz_loc_to_glob" not in coords_data:
                 raise NotImplementedError("Need the rotation matrix in the "
                                           "local coordinates dumped by the "
                                           "solver to rotate the local fields "
-                                          "from local coordinates to tpr.")
-            rotmat = coords_data["rotmat_xyz_glob_to_loc"]
+                                          "from local coordinates to global "
+                                          "xyz.")
+            rotmat = coords_data["rotmat_xyz_loc_to_glob"]
         elif loc_f_data['coordinate_system'] == 'spherical':
             rotmat = None
         else:

@@ -767,7 +767,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
         with dset_coords.collective:
             coordinates = np.array(dset_coords[start_idx:end_idx, :])  # in xyz
 
-        coords_file_data["rotmat_xyz_glob_to_loc"] = \
+        coords_file_data["rotmat_xyz_loc_to_glob"] = \
             inputfile['local'].attrs['rotmat_xyz_loc_to_glob']
         # radius of the Earth OR radius of box top if at depth
         radius_of_box_top = inputfile['local'].attrs['radius_of_box_top']
