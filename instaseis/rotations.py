@@ -288,24 +288,6 @@ def hybrid_coord_transform_local_cartesian_to_tpr(v, rot_mat):
         # tpr, r in metres
     return spherical
 
-"""
-def hybrid_coord_transform_tpr_to_local_cartesian(v, rot_mat):
-    # rot_mat : xyz_global_to_xyz_local
-    # tpr -> global xyz
-    xyz = np.zeros(v.shape)
-    for i in np.arange(v.shape[0]):
-        v0 = np.deg2rad(v[i, 0])
-        v1 = np.deg2rad(v[i, 1])
-        v2 = v[i, 2]
-
-        xyz[i, 0] = v2 * np.sin(v0) * np.cos(v1)
-        xyz[i, 1] = v2 * np.sin(v0) * np.sin(v1)
-        xyz[i, 2] = v2 * np.cos(v0)
-    # global xyz -> local cartesian
-    xyz_loc = np.dot(xyz, rot_mat.T)
-
-    return xyz_loc
-"""
 
 def hybrid_vector_local_cartesian_to_tpr(v, rot_mat, phi, theta):
 
