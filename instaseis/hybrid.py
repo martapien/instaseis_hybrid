@@ -399,7 +399,7 @@ def _hybrid_generate_output(inputfile, outputfile, fwd_db_path, dt,
 
     if dumpcoords == "local":
         # we transpose it to have loc_to_glob, this rotmat is glob_to_loc
-        coords_rotmat = coords_file_data['rotmat_xyz_glob_to_loc'].T
+        coords_rotmat = coords_file_data['rotmat_xyz_loc_to_glob'].T
     else:
         coords_rotmat = None
 
@@ -777,7 +777,7 @@ def _read_coordinates_file(inputfile, start_idx, npoints_rank,
 
         coordinates[:, 2] += radius_of_box_top
         coordinates = rotations.hybrid_coord_transform_local_cartesian_to_tpr(
-            coordinates, coords_file_data["rotmat_xyz_glob_to_loc"])
+            coordinates, coords_file_data["rotmat_xyz_loc_to_glob"])
 
         coords_file_data["coordinates"] = coordinates
 
