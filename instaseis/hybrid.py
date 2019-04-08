@@ -902,19 +902,14 @@ def _make_sources(coordinates, database):
     sources = []
     items = coordinates.shape[0]
 
-    with open('coords_tpr_test.txt', 'w') as f:
-        for i in np.arange(items):
-            lat = 90.0 - coordinates[i, 0]
-            lon = coordinates[i, 1]
-            dep = (6371000.0 - coordinates[i, 2])
-            # if dep < 0.0:
-            # ToDo remove this
-            f.write("point: %f, coord: (%f, %f, %f) \n"
-                    % (i, lat, lon, dep))
-            sources.append(Source(
-                latitude=lat,
-                longitude=lon,
-                depth_in_m=dep))
+    for i in np.arange(items):
+        lat = 90.0 - coordinates[i, 0]
+        lon = coordinates[i, 1]
+        dep = (6371000.0 - coordinates[i, 2])
+        sources.append(Source(
+            latitude=lat,
+            longitude=lon,
+            depth_in_m=dep))
 
     sources = _database_bounds_checks(sources, database)
 
