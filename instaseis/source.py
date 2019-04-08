@@ -452,7 +452,8 @@ class Source(SourceOrReceiver, SourceTimeFunction):
                 raise SourceParseError("Event must contain a moment tensor.")
             t = fm.moment_tensor.tensor
             return Source(
-                latitude=elliptic_to_geocentric_latitude(org.latitude),
+                latitude=org.latitude, #elliptic_to_geocentric_latitude(
+            # org.latitude),
                 longitude=org.longitude,
                 depth_in_m=org.depth,
                 origin_time=org.time,
@@ -590,8 +591,8 @@ class Source(SourceOrReceiver, SourceTimeFunction):
     def __str__(self):
         return_str = 'Instaseis Source:\n'
         return_str += '\tOrigin Time      : %s\n' % (self.origin_time,)
-        return_str += '\tLongitude        : %6.1f deg\n' % (self.longitude,)
-        return_str += '\tLatitude         : %6.1f deg\n' % (self.latitude,)
+        return_str += '\tLongitude        : %6.5f deg\n' % (self.longitude,)
+        return_str += '\tLatitude         : %6.5f deg\n' % (self.latitude,)
         return_str += '\tDepth            : %s km\n' % (
             "%6.1e km" % (self.depth_in_m / 1e3)
             if self.depth_in_m is not None else " not set")
