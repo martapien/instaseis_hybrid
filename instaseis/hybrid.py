@@ -160,8 +160,8 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
     else:
         raise NotImplementedError('Provide input as hdf5 or netcdf file.')
 
-    # coordinate files and fields files in the same coordinates; bg always
-    # in spherical (required):
+    # coordinate files, fields files and bg fields must be in the same
+    # coordinates
     _files_coordinates_checks(f_coords, f_fields_loc, f_fields_bg)
 
     # get the total number of points to dump
@@ -859,11 +859,12 @@ def _read_bg_fields_file(fieldsfile, start_idx, npoints_rank):
     fields_file_data = {}
     end_idx = start_idx + npoints_rank
 
-    if "spherical" not in fieldsfile:
-        raise NotImplementedError("Background field need to be in spherical "
-                                  "coordinates")
-
-    grp_fields = fieldsfile['spherical']
+    if "local" in fieldsfile:
+        grp_fields = fieldsfile['local']
+    elif "spherical" in fieldsfile:
+        grp_fields = fieldsfile['spherical']
+    else:
+        raise NotImplementedError
 
     fields_file_data['velocity'] = \
         grp_fields['velocity'][start_idx:end_idx, :, :]
@@ -982,14 +983,23 @@ def _files_coordinates_checks(f_coords, f_fields_loc, f_fields_bg=None):
             or (('spherical' in f_fields_loc) and ('spherical' not in f_coords)) \
             or (('local' in f_fields_loc) and ('local' not in f_coords)):
         raise NotImplementedError("Only spherical or local groups "
-                                  "allowed. Both files must have the same "
+                                  "allowed. HDF5 files must have the same "
                                   "groups, i.e. be in the same "
                                   "coordinates.")
 
+    # if we don't hit an error above and if bg fields are present,
+    # check that it's in the same coordinate system too
     if f_fields_bg is not None:
-        if 'spherical' not in f_fields_bg:
-            raise NotImplementedError("Background field must be in spherical "
-                                      "coordinates")
+        if (('spherical' in f_fields_bg) and ('spherical' not in f_fields_loc)) \
+                or (('local' in f_fields_bg) and ('local' not in f_fields_loc)) \
+                or (('spherical' in f_fields_loc) and (
+                    'spherical' not in f_fields_bg)) \
+                or (('local' in f_fields_loc) and ('local' not in f_fields_bg)):
+
+            raise NotImplementedError("Only spherical or local groups "
+                                      "allowed. HDF5 files must have the same "
+                                      "groups, i.e. be in the same "
+                                      "coordinates.")
 
 
 def _get_ntimesteps(database, dt,

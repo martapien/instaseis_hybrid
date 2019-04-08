@@ -25,6 +25,8 @@ import obspy.io.xseed.parser
 import os
 from scipy import interp
 from scipy import signal
+from scipy.integrate import cumtrapz
+
 from math import ceil
 
 from . import ReceiverParseError, SourceParseError
@@ -1651,6 +1653,15 @@ class HybridSource(object):
         w = weight
         pointsources = []
 
+        if bg_fields is not None:
+            # both are either in xyz or tpr
+            displacement[:, 0] -= cumtrapz(bg_fields['velocity'][:, 0],
+                                  dx=dt, initial=0.0)
+            displacement[:, 1] -= cumtrapz(bg_fields['velocity'][:, 1],
+                                  dx=dt, initial=0.0)
+            displacement[:, 2] -= cumtrapz(bg_fields['velocity'][:, 2],
+                                  dx=dt, initial=0.0)
+
         # if rotmat is specified, it means we have displacement and strain in
         # local xyz and need to rotate it; bg_fields are always in tpr
 
@@ -1679,12 +1690,6 @@ class HybridSource(object):
             missing_samples, -displacement[-1, 1])))  # phi
         d2 = np.concatenate((-np.array(displacement[:, 2]), np.full(
             missing_samples, -displacement[-1, 2])))  # r
-
-        if bg_fields is not None:
-            # both are in tpr
-            d0 = d0 - bg_fields['displacement'][:, 0]
-            d1 = d1 - bg_fields['displacement'][:, 1]
-            d2 = d2 - bg_fields['displacement'][:, 2]
 
         # taper
         tlen = max(int(ceil(0.8 * len(d0))), 5)
@@ -1762,6 +1767,32 @@ class HybridSource(object):
              n[2] * (c_13 * e_11 + 2.0 * c_35 * e_31 + c_23 * e_22 +
                      c_33 * e_33)
 
+        if bg_fields is not None:
+            # ToDo we can only have bg field as stress
+            bg_strs_11 = np.array(bg_fields['stress'][:, 0], dtype=np.float64)
+            bg_strs_22 = np.array(bg_fields['stress'][:, 1], dtype=np.float64)
+            bg_strs_33 = np.array(bg_fields['stress'][:, 2], dtype=np.float64)
+            bg_strs_32 = np.array(bg_fields['strain'][:, 3], dtype=np.float64)
+            bg_strs_31 = np.array(bg_fields['strain'][:, 4], dtype=np.float64)
+            bg_strs_12 = np.array(bg_fields['strain'][:, 5], dtype=np.float64)
+
+            bg_t0 = n_tpr[0] * bg_strs_11 + \
+                    n_tpr[1] * bg_strs_12 + \
+                    n_tpr[2] * bg_strs_31
+
+            bg_t1 = n_tpr[0] * bg_strs_12 + \
+                    n_tpr[1] * bg_strs_22 + \
+                    n_tpr[2] * bg_strs_32
+
+            bg_t2 = n_tpr[0] * bg_strs_31 + \
+                    n_tpr[1] * bg_strs_32 + \
+                    n_tpr[2] * bg_strs_33
+
+            # both tractions are in either xyz or tpr
+            t0 -= bg_t0
+            t1 -= bg_t1
+            t2 -= bg_t2
+
         traction = np.array([t0, t1, t2]).T
         if rotmat is not None:
             traction = rotations.hybrid_vector_local_cartesian_to_tpr(
@@ -1773,37 +1804,6 @@ class HybridSource(object):
             missing_samples, traction[-1, 1])))  # phi
         t2 = np.concatenate((np.array(traction[:, 2]), np.full(
             missing_samples, traction[-1, 2])))  # r
-
-        if bg_fields is not None:
-            # ToDo it will be faster to have the bg field as traction!!
-            bg_e_11 = np.array(bg_fields['strain'][:, 0], dtype=np.float64)
-            bg_e_22 = np.array(bg_fields['strain'][:, 1], dtype=np.float64)
-            bg_e_33 = np.array(bg_fields['strain'][:, 2], dtype=np.float64)
-            bg_e_32 = np.array(bg_fields['strain'][:, 3], dtype=np.float64)
-            bg_e_31 = np.array(bg_fields['strain'][:, 4], dtype=np.float64)
-            bg_e_12 = np.array(bg_fields['strain'][:, 5], dtype=np.float64)
-
-            bg_t0 = n_tpr[0] * (c_11 * bg_e_11 + 2.0 * c_15 * bg_e_31 + c_12 *
-                                bg_e_22 + c_13 * bg_e_33) + \
-                    n_tpr[1] * 2.0 * (c_66 * bg_e_12 + c_46 * bg_e_32) + \
-                    n_tpr[2] * (c_15 * bg_e_11 + c_25 * bg_e_22 + c_35 *
-                                bg_e_33 + 2.0 * c_55 * bg_e_31)
-
-            bg_t1 = n_tpr[0] * 2.0 * (c_66 * bg_e_12 + c_46 * bg_e_32) + \
-                    n_tpr[1] * (c_12 * bg_e_11 + 2.0 * c_25 * bg_e_31 +
-                                c_22 * bg_e_22 + c_23 * bg_e_33) + \
-                    n_tpr[2] * 2.0 * (c_46 * bg_e_12 + c_44 * bg_e_32)
-
-            bg_t2 = n_tpr[0] * (c_15 * bg_e_11 + 2.0 * c_55 * bg_e_31 +
-                                c_25 * bg_e_22 + c_35 * bg_e_33) + \
-                    n_tpr[1] * 2.0 * (c_46 * bg_e_12 + c_44 * bg_e_32) + \
-                    n_tpr[2] * (c_13 * bg_e_11 + 2.0 * c_35 * bg_e_31
-                                + c_23 * bg_e_22 + c_33 * bg_e_33)
-
-            # both tractions are in tpr
-            t0 = t0 - bg_t0
-            t1 = t1 - bg_t1
-            t2 = t2 - bg_t2
 
         # taper
         tlen = max(int(ceil(0.08 * len(t0))), 5)

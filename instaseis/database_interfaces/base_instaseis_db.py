@@ -978,8 +978,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
             if bg_f_data is not None:
                 bg_fields = {}
-                bg_fields['displacement'] = bg_f_data['displacement'][i, :, :],
-                bg_fields['strain'] = bg_f_data['strain'][i, :, :]
+                bg_fields['velocity'] = bg_f_data['velocity'][i, :, :],
+                bg_fields['stress'] = bg_f_data['stress'][i, :, :]
             else:
                 bg_fields = None
 
