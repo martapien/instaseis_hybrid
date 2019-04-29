@@ -838,10 +838,10 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
         raise NotImplementedError
 
     fields_file_data['displacement'] = \
-        grp_fields['displacement'][start_idx:end_idx, :, :]
+        grp_fields['displacement']#[start_idx:end_idx, :, :]
 
     fields_file_data['strain'] = \
-        grp_fields['strain'][start_idx:end_idx, :, :]
+        grp_fields['strain']#[start_idx:end_idx, :, :]
 
     dt = grp_fields.attrs['dt']
 
@@ -851,7 +851,8 @@ def _read_local_fields_file(fieldsfile, start_idx, npoints_rank):
         dt = dt[0]
 
     fields_file_data['dt'] = dt
-
+    fields_file_data['start_idx'] = start_idx
+    fields_file_data['end_idx'] = end_idx
     return fields_file_data
 
 

@@ -975,7 +975,7 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
         duration = (self.info.npts - 1) * self.info.dt
 
         for i in np.arange(len(coords_data["normals"])):
-
+            j = loc_f_data["start_idx"] + i
             if bg_f_data is not None:
                 bg_fields = {}
                 bg_fields['velocity'] = bg_f_data['velocity'][i, :, :]
@@ -985,8 +985,8 @@ class BaseInstaseisDB(with_metaclass(ABCMeta)):
 
             sources = HybridSource(
                 coords_data["coordinates"][i, :], coords_data["normals"][i, :],
-                coords_data["weights"][i], loc_f_data['displacement'][i, :, :],
-                loc_f_data['strain'][i, :, :],
+                coords_data["weights"][i], loc_f_data['displacement'][j, :, :],
+                loc_f_data['strain'][j, :, :],
                 coords_data['elastic_parameters'][i, :],
                 dt_stf, duration, bg_fields=bg_fields, rotmat=rotmat)
 
