@@ -1772,9 +1772,9 @@ class HybridSource(object):
             bg_strs_11 = np.array(bg_fields['stress'][:, 0], dtype=np.float64)
             bg_strs_22 = np.array(bg_fields['stress'][:, 1], dtype=np.float64)
             bg_strs_33 = np.array(bg_fields['stress'][:, 2], dtype=np.float64)
-            bg_strs_32 = np.array(bg_fields['strain'][:, 3], dtype=np.float64)
-            bg_strs_31 = np.array(bg_fields['strain'][:, 4], dtype=np.float64)
-            bg_strs_12 = np.array(bg_fields['strain'][:, 5], dtype=np.float64)
+            bg_strs_32 = np.array(bg_fields['stress'][:, 3], dtype=np.float64)
+            bg_strs_31 = np.array(bg_fields['stress'][:, 4], dtype=np.float64)
+            bg_strs_12 = np.array(bg_fields['stress'][:, 5], dtype=np.float64)
 
             bg_t0 = n_tpr[0] * bg_strs_11 + \
                     n_tpr[1] * bg_strs_12 + \
