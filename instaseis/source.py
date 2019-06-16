@@ -1644,7 +1644,10 @@ class HybridSource(object):
         depth_in_m = 6371000.0 - tpr[2]
         #if -1.0 <= depth_in_m <= 0.0:
         #    depth_in_m = 0.0
+        ignore_point = False
         if depth_in_m <= 0.0:  # ToDo review that check here!!
+            if depth_in_m < -16:
+                ignore_point = True
             depth_in_m = 0.0
 
         c_11, c_12, c_13, c_15, c_22, c_23, c_25, c_33, c_35, c_44, c_46, \
@@ -1705,6 +1708,14 @@ class HybridSource(object):
         m_rp = c_46 * n_tpr[1] * w  # = 0 for isotropy
         m_rt = (c_55 * n_tpr[2] + c_15 * n_tpr[0]) * w
         m_tp = c_66 * n_tpr[1] * w
+        if ignore_point:
+            m_tt = 0.
+            m_pp = 0.
+            m_rr = 0.
+            m_rp = 0.
+            m_rt = 0.
+            m_tp = 0.
+
         pointsources.append(Source(latitude, longitude,
                                    depth_in_m=depth_in_m,
                                    m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
@@ -1716,6 +1727,13 @@ class HybridSource(object):
         m_rp = (c_44 * n_tpr[2] + c_46 * n_tpr[0]) * w
         m_rt = c_25 * n_tpr[1] * w  # = 0 for isotropy
         m_tp = (c_66 * n_tpr[0] + c_46 * n_tpr[2]) * w
+        if ignore_point:
+            m_tt = 0.
+            m_pp = 0.
+            m_rr = 0.
+            m_rp = 0.
+            m_rt = 0.
+            m_tp = 0.
         pointsources.append(Source(latitude, longitude,
                                    depth_in_m=depth_in_m,
                                    m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
@@ -1727,6 +1745,13 @@ class HybridSource(object):
         m_rp = c_44 * n_tpr[1] * w
         m_rt = (c_55 * n_tpr[0] + c_35 * n_tpr[2]) * w
         m_tp = c_46 * n_tpr[1] * w  # = 0 for isotropy
+        if ignore_point:
+            m_tt = 0.
+            m_pp = 0.
+            m_rr = 0.
+            m_rp = 0.
+            m_rt = 0.
+            m_tp = 0.
         pointsources.append(Source(latitude, longitude,
                                    depth_in_m=depth_in_m,
                                    m_rr=m_rr, m_tt=m_tt, m_pp=m_pp,
@@ -1812,6 +1837,9 @@ class HybridSource(object):
         t0 = taper * t0
         t1 = taper * t1
         t2 = taper * t2
+
+        if ignore_point:
+            w = 0
 
         pointsources.append(ForceSource(latitude, longitude,
                                         depth_in_m=depth_in_m,
