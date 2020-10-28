@@ -1,6 +1,8 @@
 ## Hybrid extension to Instaseis
 
-### Installation
+When using this work, please cite https://doi.org/10.31223/X5HG65
+
+### How to install
 
 1. Clone the repository.
    
@@ -132,13 +134,29 @@
      ```
      CC="mpicc" HDF5_MPI="ON" HDF5_DIR=/path/to/hdf5-install pip install --no-binary=h5py h5py
      ```
-5. Installing [AxiSEM](http://seis.earth.ox.ac.uk/axisem/) (to generate Instaseis databases) requires netcdf-fortran. In order
-   to not end up with multiple installations of MPICH and HDF5, we recommend installing netcdf
-   from source and linking it to the locally installed versions (to then point AxiSEM to this
-   locally installed netcdf version).
+5. Installing [AxiSEM](http://seis.earth.ox.ac.uk/axisem/) (to generate Instaseis databases) requires 
+   netcdf-fortran. In order to not end up with multiple installations of MPICH and HDF5, 
+   we recommend installing netcdf from source and linking it to the locally installed versions 
+   (to then point AxiSEM to this locally installed netcdf version).
    
    See also that to use repack_databases, Instaseis needs netcdf4 in python. netcdf4 can
    also be linked to the locally installed netcdf version.
 
 ### How to run
 
+#### Wavefield injection
+
+
+#### Wavefield extrapolation
+
+
+#### The format of the HDF5 interfacing files
+
+
+#### Final comments
+
+Contact Marta Pienkowska (marta.pienkowska@erdw.ethz.ch) should you wish to have
+some details on Specfem3D Cartesian that has been modified to work with both 
+injection and extrapolation of the hybrid method.
+
+Note that merged Instaseis databases are not implemented in the hybrid framework for the time being.
