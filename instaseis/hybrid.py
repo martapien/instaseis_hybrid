@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 """
 Hybrid classes of Instaseis.
 
 :copyright:
-    Marta Pienkowska-Cote (marta.pienkowska@earth.ox.ac.uk), 2017
+    Marta Pienkowska (marta.pienkowska@erdw.ethz.ch), 2017
 :license:
     GNU Lesser General Public License, Version 3 [non-commercial/academic use]
     (http://www.gnu.org/copyleft/lgpl.html)
 """
+
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
@@ -73,6 +75,10 @@ def hybrid_extraction(input_path, output_path, fwd_db_path, dt, source,
                       remove_source_shift=True, dumpcoords="spherical",
                       dumpfields=("velocity", "strain"), precision='f4',
                       max_data_buffer_in_mb=1024):
+
+    """
+    # ToDo function description
+    """
 
     if dumpcoords != "spherical" and dumpcoords != "local":
         raise NotImplementedError("Can dump only in tpr (spherical) or xyz ("
@@ -139,6 +145,9 @@ def hybrid_repropagation(fields_path, coords_path, receiver, bwd_db_path,
                          dt=None, kind='displacement', kernelwidth=12,
                          return_obspy_stream=True):
 
+    """
+    # ToDo function description
+    """
     if coords_path.endswith('.hdf5') or not coords_path.endswith('.nc'):
         if parallel_active:
             f_coords = h5py.File(

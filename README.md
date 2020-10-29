@@ -1,6 +1,45 @@
 ## Hybrid extension to Instaseis
 
-When using this work, please cite https://doi.org/10.31223/X5HG65
+The hybrid extenstion to [Instaseis](http://instaseis.net) provides the framework for coupling global 
+Instaseis databases (generated with [AxiSEM](http://seis.earth.ox.ac.uk/axisem/)) with a local wave 
+propagation solver of choice. It is a two-step procedure, i.e. there is no dynamic boundary condition,
+and the coupling happens via static HDF5 files that serve as an interface between the solvers.
+
+Three setups are possible:
+
+1. The local domain is around receivers at the Earth's surface. In this case, we use Instaseis to generate
+   HDF5 files that contain information about the global wavefields on the boundary of the local domain.
+   The information from the HDF5 files needs to be then used by the local solver to impose background
+   wavefields on the boundary of the local domain (wavefield _injection_).
+   
+   - First run Instaseis.
+   - Then run a local solver.
+   
+   This requires a _forward_ Instaseis database.
+   
+2. The local domain is around the source at the Earth's surface. In this case, the local simulation 
+   generates HDF5 files with information on the boundary of the local domain. They are then used by 
+   Instaseis to extrapolate local wavefields to receivers at distance (wavefield _repropagation_ or 
+   _extrapolation_).
+   
+   - First run a local solver.
+   - Then run Instaseis.
+   
+   This requires a _reciprocal_ Instaseis database.
+   
+3. The local domain is at depth. This combines both injection and extrapolation.
+
+   - First run Instaseis.
+   - Then run a local solver.
+   - And finally run Instaseis again.
+   
+   This requires both a _forward_ and a _reciprocal_ Instaseis database (for the same 1D model).
+   
+   
+For more details look at the **How to run** section below and read https://doi.org/10.31223/X5HG65.
+   
+When using this work, please also cite https://doi.org/10.31223/X5HG65
+
 
 ### How to install
 
@@ -142,15 +181,58 @@ When using this work, please cite https://doi.org/10.31223/X5HG65
    See also that to use repack_databases, Instaseis needs netcdf4 in python. netcdf4 can
    also be linked to the locally installed netcdf version.
 
+
 ### How to run
+
+(this section is work in progress)
 
 #### Wavefield injection
 
+##### Basic concept: 
 
-#### Wavefield extrapolation
+1. Run Instaseis to save information on the boundary of the local solver in HDF5.
+2. Run a local solver imposing wavefield information from HDF5 files on the boundary.
 
+The function `hybrid_extraction` extracts global wavefields to chosen locations (usually 
+on the local mesh points). It then saves a HDF5 file with information required for injection.
 
-#### The format of the HDF5 interfacing files
+See `instaseis/hybrid_example_scripts/using_parallel_hybrid_extraction.py` for an example script 
+on how to extract wavefields for injection with mpi4py and parallel h5py. 
+
+##### The format of the injection HDF5 interfacing files:
+
+#### Wavefield repropagation/extrapolation
+
+##### Basic concept: 
+
+1. Run a local solver.
+2. Save information on the boundary of the local solver in HDF5.
+3. Run Instaseis to repropagate wavefields to receivers.
+
+The function `hybrid_repropagation` repropagates local wavefields to chosen receiver locations. It outputs
+the resulting seismogram as an 
+[obspy stream object](https://docs.obspy.org/packages/autogen/obspy.core.stream.Stream.html).
+    
+For example, for a local domain around the source, we need to provide HDF5 files with local wavefields and
+with local coordinates, an Instaseis receiver object, and a path to a reciprocal Instaseis database:
+
+    st_hyb = instaseis.hybrid_repropagation(
+                fields_path=fieldsfile,
+                coords_path=coordsfile, 
+                receiver=instaseis_receiver,
+                bwd_db_path=bwd_db_path, 
+                components='Z',
+                dt=0.05
+    )
+
+The above outputs only the Z component, and resamples the final seismogram to a desired time step.
+
+For a local domain at depth, a HDF5 file with background wavefields is also required.
+
+See `instaseis/hybrid_example_scripts/using_parallel_hybrid_repropagation.py` for an example script 
+on how to use repropagation with mpi4py and parallel h5py. 
+
+##### The format of the repropagation HDF5 interfacing files:
 
 
 #### Final comments
